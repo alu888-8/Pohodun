@@ -57,6 +57,7 @@ def get_users_count():
     cursor = conn.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM users")
+
     count = cursor.fetchone()[0]
 
     conn.close()

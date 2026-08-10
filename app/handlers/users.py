@@ -4,7 +4,6 @@ from aiogram.types import Message
 
 from app.database.db import get_users_count
 
-
 router = Router()
 
 
