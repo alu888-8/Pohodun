@@ -50,3 +50,15 @@ def save_city(user_id, city):
 
     conn.commit()
     conn.close()
+
+
+def get_users_count():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+
+    conn.close()
+
+    return count

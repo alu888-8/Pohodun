@@ -14,9 +14,11 @@ from app.handlers.alerts import router as alerts_router
 from app.handlers.threats import router as threats_router
 from app.handlers.advice import router as advice_router
 from app.handlers.settings import router as settings_router
+from app.handlers.users import router as users_router
 
 
 async def main():
+
     # Створюємо базу даних, якщо її ще немає
     init_db()
 
@@ -33,6 +35,7 @@ async def main():
     dp.include_router(threats_router)
     dp.include_router(advice_router)
     dp.include_router(settings_router)
+    dp.include_router(users_router)
 
     print("✅ Pohodun запущений")
 
