@@ -17,6 +17,10 @@ from app.handlers.users import router as users_router
 from app.handlers.settings import router as settings_router
 
 
+# ID Telegram-групи
+GROUP_CHAT_ID = -493936504
+
+
 async def main():
 
     # Створюємо базу даних, якщо її ще немає
@@ -34,13 +38,20 @@ async def main():
     dp.include_router(alerts_router)
     dp.include_router(threats_router)
     dp.include_router(advice_router)
-
-    # Команда /users
     dp.include_router(users_router)
-
     dp.include_router(settings_router)
 
     print("✅ Pohodun запущений")
+
+    # Тестове повідомлення в групу
+    try:
+        await bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text="🤖 Pohodun підключився до групи!"
+        )
+        print("✅ Повідомлення в групу відправлено")
+    except Exception as e:
+        print(f"❌ Помилка відправки в групу: {e}")
 
     await dp.start_polling(bot)
 
