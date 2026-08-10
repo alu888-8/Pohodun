@@ -16,6 +16,9 @@ from app.handlers.advice import router as advice_router
 from app.handlers.users import router as users_router
 from app.handlers.settings import router as settings_router
 
+# Моніторинг повідомлень у групу
+from app.services.group_notifications import group_alert_monitor
+
 
 # ID Telegram-групи
 GROUP_CHAT_ID = -493936504
@@ -53,6 +56,12 @@ async def main():
     except Exception as e:
         print(f"❌ Помилка відправки в групу: {e}")
 
+    # Автоматичний моніторинг тривоги
+    asyncio.create_task(group_alert_monitor(bot))
+
+    print("🚨 Моніторинг тривоги для групи запущений")
+
+    # Запускаємо бота
     await dp.start_polling(bot)
 
 
