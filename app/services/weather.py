@@ -20,11 +20,14 @@ def get_weather(city=None):
         response = requests.get(
             url,
             params=params,
-            timeout=10
+            timeout=(3, 5)
         )
 
         if response.status_code != 200:
-            print(response.text)
+            print(
+                f"❌ WeatherAPI помилка: "
+                f"{response.status_code} {response.text}"
+            )
             return None
 
         data = response.json()
@@ -35,9 +38,16 @@ def get_weather(city=None):
             "feels_like": data["current"]["feelslike_c"],
             "condition": data["current"]["condition"]["text"],
             "humidity": data["current"]["humidity"],
-            "wind": round(data["current"]["wind_kph"] / 3.6, 1)
+            "wind": round(
+                data["current"]["wind_kph"] / 3.6,
+                1
+            )
         }
 
+    except requests.Timeout:
+        print("❌ WeatherAPI: перевищено час очікування")
+        return None
+
     except Exception as e:
-        print(e)
+        print(f"❌ Помилка WeatherAPI: {e}")
         return None
