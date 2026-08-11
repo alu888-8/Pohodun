@@ -9,6 +9,7 @@ from app.services.advice import get_advice
 
 from app.utils.weather_icons import get_weather_icon
 
+
 router = Router()
 
 
@@ -24,7 +25,9 @@ async def weather_now(message: Message):
     weather = get_weather(city_api)
 
     if weather is None:
-        await message.answer("❌ Не вдалося отримати погоду.")
+        await message.answer(
+            "❌ Не вдалося отримати погоду."
+        )
         return
 
     temp = weather["temp"]
@@ -36,7 +39,15 @@ async def weather_now(message: Message):
     # Автоматична іконка погоди
     icon = get_weather_icon(description)
 
-    advice = get_advice(temp, description)
+    # AI-порада
+    advice = get_advice(
+        temp=temp,
+        description=description,
+        city=city_ua,
+        feels_like=feels,
+        wind=wind,
+        humidity=humidity
+    )
 
     text = (
         f"🌤 <b>Погодун</b>\n\n"
@@ -51,4 +62,7 @@ async def weather_now(message: Message):
         f"{advice}"
     )
 
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
