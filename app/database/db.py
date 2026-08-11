@@ -1,6 +1,5 @@
 import sqlite3
 
-
 DB_NAME = "app/database/users.db"
 
 
@@ -16,10 +15,10 @@ def init_db():
         )
     """)
 
-    # Контент дня: анекдот + побажання
+    # Контент дня окремо для кожного міста
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS daily_content (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+        CREATE TABLE IF NOT EXISTS daily_content_city (
+            city TEXT PRIMARY KEY,
             content_date TEXT NOT NULL,
             joke TEXT NOT NULL,
             greeting TEXT NOT NULL
@@ -90,15 +89,19 @@ def get_users_count():
     return count
 
 
-def get_daily_content():
+def get_daily_content(city):
+    """
+    Отримує контент дня для конкретного міста.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT content_date, joke, greeting
-        FROM daily_content
-        WHERE id=1
-    """)
+        FROM daily_content_city
+        WHERE city=?
+    """, (city,))
 
     row = cursor.fetchone()
 
@@ -114,25 +117,31 @@ def get_daily_content():
     return None
 
 
-def save_daily_content(content_date, joke, greeting):
+def save_daily_content(city, content_date, joke, greeting):
+    """
+    Зберігає контент дня для конкретного міста.
+    Якщо для міста вже є запис — оновлює його.
+    """
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO daily_content (
-            id,
+        INSERT INTO daily_content_city (
+            city,
             content_date,
             joke,
             greeting
         )
-        VALUES (1, ?, ?, ?)
+        VALUES (?, ?, ?, ?)
 
-        ON CONFLICT(id)
+        ON CONFLICT(city)
         DO UPDATE SET
             content_date=excluded.content_date,
             joke=excluded.joke,
             greeting=excluded.greeting
     """, (
+        city,
         content_date,
         joke,
         greeting
