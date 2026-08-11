@@ -5,10 +5,7 @@ from app.database.db import get_city
 from app.data.cities import CITY_API
 
 from app.services.weather import get_weather
-from app.services.advice import get_advice
-
 from app.utils.weather_icons import get_weather_icon
-
 
 router = Router()
 
@@ -39,16 +36,6 @@ async def weather_now(message: Message):
     # Автоматична іконка погоди
     icon = get_weather_icon(description)
 
-    # AI-порада
-    advice = get_advice(
-        temp=temp,
-        description=description,
-        city=city_ua,
-        feels_like=feels,
-        wind=wind,
-        humidity=humidity
-    )
-
     text = (
         f"🌤 <b>Погодун</b>\n\n"
         f"📍 <b>{city_ua}</b>\n\n"
@@ -58,8 +45,8 @@ async def weather_now(message: Message):
         f"💨 Вітер: <b>{wind} м/с</b>\n"
         f"💧 Вологість: <b>{humidity}%</b>\n\n"
         f"━━━━━━━━━━━━━━\n\n"
-        f"👕 <b>Порада</b>\n"
-        f"{advice}"
+        f"☀️ <b>Гарного дня!</b> "
+        f"Нехай погода сьогодні буде на твоєму боці 😉"
     )
 
     await message.answer(
