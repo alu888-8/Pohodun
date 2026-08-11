@@ -15,8 +15,8 @@ from app.handlers.threats import router as threats_router
 from app.handlers.advice import router as advice_router
 from app.handlers.users import router as users_router
 from app.handlers.settings import router as settings_router
+from app.handlers.admin import router as admin_router
 
-# Моніторинг повідомлень у групу
 from app.services.group_notifications import (
     group_alert_monitor,
     morning_weather_scheduler
@@ -28,14 +28,24 @@ GROUP_CHAT_ID = -493936504
 
 async def main():
 
-    # Створюємо базу даних, якщо її ще немає
+    # =========================
+    # БАЗА ДАНИХ
+    # =========================
+
     init_db()
+
+    # =========================
+    # BOT
+    # =========================
 
     bot = Bot(token=BOT_TOKEN)
 
     dp = Dispatcher()
 
-    # Роутери
+    # =========================
+    # РОУТЕРИ
+    # =========================
+
     dp.include_router(start_router)
     dp.include_router(weather_router)
     dp.include_router(forecast_router)
@@ -45,28 +55,59 @@ async def main():
     dp.include_router(advice_router)
     dp.include_router(users_router)
     dp.include_router(settings_router)
+    dp.include_router(admin_router)
 
     print("✅ Pohodun запущений")
 
-    # Тестове повідомлення в групу
+    # =========================
+    # ТЕСТОВЕ ПОВІДОМЛЕННЯ В ГРУПУ
+    # =========================
+
     try:
+
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text="🤖 Pohodun підключився до групи!"
         )
-        print("✅ Повідомлення в групу відправлено")
+
+        print(
+            "✅ Повідомлення в групу відправлено"
+        )
+
     except Exception as e:
-        print(f"❌ Помилка відправки в групу: {e}")
 
-    # Автоматичний моніторинг тривоги
-    asyncio.create_task(group_alert_monitor(bot))
-    print("🚨 Моніторинг тривоги для групи запущений")
+        print(
+            f"❌ Помилка відправки в групу: {e}"
+        )
 
-    # Автоматична погода щодня о 06:00
-    asyncio.create_task(morning_weather_scheduler(bot))
-    print("🌅 Планувальник ранкової погоди запущений")
+    # =========================
+    # МОНІТОРИНГ ТРИВОГ
+    # =========================
 
-    # Запускаємо бота
+    asyncio.create_task(
+        group_alert_monitor(bot)
+    )
+
+    print(
+        "🚨 Моніторинг тривог для групи запущений"
+    )
+
+    # =========================
+    # РАНКОВА ПОГОДА
+    # =========================
+
+    asyncio.create_task(
+        morning_weather_scheduler(bot)
+    )
+
+    print(
+        "🌅 Планувальник ранкової погоди запущений"
+    )
+
+    # =========================
+    # ЗАПУСК БОТА
+    # =========================
+
     await dp.start_polling(bot)
 
 
