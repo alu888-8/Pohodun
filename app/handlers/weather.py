@@ -17,7 +17,6 @@ from app.services.ai_joke import generate_daily_content
 
 from app.utils.weather_icons import get_weather_icon
 
-
 router = Router()
 
 
@@ -48,16 +47,17 @@ async def weather_now(message: Message):
     icon = get_weather_icon(description)
 
     # ==========================================
-    # КОНТЕНТ ДНЯ
+    # КОНТЕНТ ДНЯ ДЛЯ КОНКРЕТНОГО МІСТА
     # ==========================================
 
     today = datetime.now(
         ZoneInfo("Europe/Kyiv")
     ).strftime("%Y-%m-%d")
 
-    daily_content = get_daily_content()
+    # Шукаємо контент саме для цього міста
+    daily_content = get_daily_content(city_ua)
 
-    # Якщо сьогодні контенту ще немає —
+    # Якщо для цього міста сьогодні контенту ще немає —
     # генеруємо його через AI
     if (
         daily_content is None
@@ -65,7 +65,7 @@ async def weather_now(message: Message):
     ):
 
         print(
-            f"🤖 Генеруємо новий контент дня: {today}"
+            f"🤖 Генеруємо контент дня для {city_ua}: {today}"
         )
 
         daily_content = generate_daily_content(
@@ -76,19 +76,20 @@ async def weather_now(message: Message):
         if daily_content is not None:
 
             save_daily_content(
+                city=city_ua,
                 content_date=today,
                 joke=daily_content["joke"],
                 greeting=daily_content["greeting"]
             )
 
             print(
-                "✅ Контент дня збережено"
+                f"✅ Контент дня збережено для {city_ua}"
             )
 
         else:
 
             print(
-                "❌ Не вдалося згенерувати контент дня"
+                f"❌ Не вдалося згенерувати контент для {city_ua}"
             )
 
             # Запасний варіант, якщо AI недоступний
@@ -99,15 +100,15 @@ async def weather_now(message: Message):
                     "і так достатньо непередбачувана 😄"
                 ),
                 "greeting": (
-                    "☀️ Гарного дня! "
-                    "Нехай сьогодні все складається легко 😉"
+                    "☀️ Нехай цей день принесе "
+                    "щось приємне 😉"
                 )
             }
 
     else:
 
         print(
-            f"📦 Використовуємо контент дня: {today}"
+            f"📦 Використовуємо контент дня для {city_ua}: {today}"
         )
 
     # ==========================================
