@@ -1,5 +1,7 @@
 from aiogram import Router
 from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from app.database.db import get_city, save_city
 from app.services.weather import get_weather
@@ -10,7 +12,13 @@ from app.keyboards.settings import settings_keyboard
 from app.keyboards.cities import cities_keyboard
 from app.keyboards.menu import main_menu
 
+
 router = Router()
+
+
+# Стан для введення іншого міста
+class CityState(StatesGroup):
+    waiting_for_city = State()
 
 
 @router.message(lambda message: message.text == "⚙️ Налаштування")
@@ -40,7 +48,9 @@ async def choose_city_menu(message: Message):
 
 
 @router.message(lambda message: message.text == "⬅️ Назад")
-async def back_to_menu(message: Message):
+async def back_to_menu(message: Message, state: FSMContext):
+
+    await state.clear()
 
     await message.answer(
         "🏠 Головне меню",
@@ -49,7 +59,7 @@ async def back_to_menu(message: Message):
 
 
 @router.message(lambda message: message.text.startswith("📍"))
-async def choose_city(message: Message):
+async def choose_city(message: Message, state: FSMContext):
 
     city = message.text.replace("📍", "").strip()
 
@@ -70,6 +80,8 @@ async def choose_city(message: Message):
         city
     )
 
+    await state.clear()
+
     await message.answer(
         f"✅ Місто змінено на <b>{city}</b>",
         parse_mode="HTML",
@@ -78,7 +90,9 @@ async def choose_city(message: Message):
 
 
 @router.message(lambda message: message.text == "✏️ Інше місто")
-async def other_city(message: Message):
+async def other_city(message: Message, state: FSMContext):
+
+    await state.set_state(CityState.waiting_for_city)
 
     await message.answer(
         "✍️ Напишіть назву міста англійською.\n\n"
@@ -89,23 +103,34 @@ async def other_city(message: Message):
     )
 
 
-@router.message()
-async def change_city(message: Message):
+@router.message(CityState.waiting_for_city)
+async def change_city(message: Message, state: FSMContext):
 
-    api_city = message.text.strip()
+    city = message.text.strip()
 
-    weather = get_weather(api_city)
+    if not city:
+        await message.answer("❌ Введіть назву міста.")
+        return
+
+    weather = get_weather(city)
 
     if weather is None:
+        await message.answer(
+            "❌ Не вдалося знайти це місто.\n\n"
+            "Спробуйте написати назву англійською, "
+            "наприклад: Kyiv, Lviv, Odesa."
+        )
         return
 
     save_city(
         message.from_user.id,
-        api_city
+        city
     )
 
+    await state.clear()
+
     await message.answer(
-        f"✅ Місто змінено на <b>{api_city}</b>",
+        f"✅ Місто змінено на <b>{city}</b>",
         parse_mode="HTML",
         reply_markup=main_menu
     )
