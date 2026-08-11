@@ -41,12 +41,25 @@ def get_city(user_id):
 
     row = cursor.fetchone()
 
+    # Якщо користувача ще немає —
+    # автоматично додаємо його
+    if row is None:
+        cursor.execute(
+            """
+            INSERT INTO users (telegram_id, city)
+            VALUES (?, ?)
+            """,
+            (user_id, "Київ")
+        )
+
+        conn.commit()
+        conn.close()
+
+        return "Київ"
+
     conn.close()
 
-    if row:
-        return row[0]
-
-    return "Київ"
+    return row[0]
 
 
 def save_city(user_id, city):
