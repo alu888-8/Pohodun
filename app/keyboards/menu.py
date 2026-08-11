@@ -3,8 +3,13 @@ from aiogram.types import (
     KeyboardButton,
 )
 
-main_menu = ReplyKeyboardMarkup(
-    keyboard=[
+
+ADMIN_ID = 366025054
+
+
+def get_main_menu(user_id: int):
+
+    keyboard = [
         [
             KeyboardButton(text="🌤 Погода зараз"),
         ],
@@ -20,6 +25,17 @@ main_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="👕 Поради"),
             KeyboardButton(text="⚙️ Налаштування"),
         ],
-    ],
-    resize_keyboard=True,
-)
+    ]
+
+    # Кнопка адмінки тільки для адміністратора
+    if user_id == ADMIN_ID:
+        keyboard.append(
+            [
+                KeyboardButton(text="🔧 Адмінка"),
+            ]
+        )
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+    )

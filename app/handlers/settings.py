@@ -10,7 +10,7 @@ from app.data.cities import CITY_API
 
 from app.keyboards.settings import settings_keyboard
 from app.keyboards.cities import cities_keyboard
-from app.keyboards.menu import main_menu
+from app.keyboards.menu import get_main_menu
 
 
 router = Router()
@@ -25,7 +25,9 @@ class CityState(StatesGroup):
 # НАЛАШТУВАННЯ
 # =========================
 
-@router.message(lambda message: message.text == "⚙️ Налаштування")
+@router.message(
+    lambda message: message.text == "⚙️ Налаштування"
+)
 async def settings(message: Message):
 
     user_id = message.from_user.id
@@ -53,8 +55,13 @@ async def settings(message: Message):
 # ЗМІНИТИ МІСТО
 # =========================
 
-@router.message(lambda message: message.text == "🗺 Змінити місто")
-async def choose_city_menu(message: Message, state: FSMContext):
+@router.message(
+    lambda message: message.text == "🗺 Змінити місто"
+)
+async def choose_city_menu(
+    message: Message,
+    state: FSMContext
+):
 
     await state.clear()
 
@@ -69,14 +76,21 @@ async def choose_city_menu(message: Message, state: FSMContext):
 # НАЗАД
 # =========================
 
-@router.message(lambda message: message.text == "⬅️ Назад")
-async def back_to_menu(message: Message, state: FSMContext):
+@router.message(
+    lambda message: message.text == "⬅️ Назад"
+)
+async def back_to_menu(
+    message: Message,
+    state: FSMContext
+):
 
     await state.clear()
 
     await message.answer(
         "🏠 Головне меню",
-        reply_markup=main_menu
+        reply_markup=get_main_menu(
+            message.from_user.id
+        )
     )
 
 
@@ -84,10 +98,21 @@ async def back_to_menu(message: Message, state: FSMContext):
 # ВИБІР МІСТА З КНОПКИ
 # =========================
 
-@router.message(lambda message: message.text and message.text.startswith("📍"))
-async def choose_city(message: Message, state: FSMContext):
+@router.message(
+    lambda message:
+    message.text
+    and message.text.startswith("📍")
+)
+async def choose_city(
+    message: Message,
+    state: FSMContext
+):
 
-    city = message.text.replace("📍", "").strip()
+    city = message.text.replace(
+        "📍",
+        ""
+    ).strip()
+
     user_id = message.from_user.id
 
     print(
@@ -99,20 +124,30 @@ async def choose_city(message: Message, state: FSMContext):
     api_city = CITY_API.get(city)
 
     if api_city is None:
+
         await message.answer(
             "❌ Такого міста немає у списку."
         )
+
         return
 
-    weather = get_weather(api_city)
+    weather = await __import__(
+        "asyncio"
+    ).to_thread(
+        get_weather,
+        api_city
+    )
 
     if weather is None:
+
         await message.answer(
-            "❌ Не вдалося отримати погоду для цього міста."
+            "❌ Не вдалося отримати погоду "
+            "для цього міста."
         )
+
         return
 
-    # Зберігаємо місто КОНКРЕТНОГО користувача
+    # Зберігаємо місто конкретного користувача
     save_city(
         user_id,
         city
@@ -129,7 +164,9 @@ async def choose_city(message: Message, state: FSMContext):
     await message.answer(
         f"✅ Місто змінено на <b>{city}</b>",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=get_main_menu(
+            user_id
+        )
     )
 
 
@@ -137,8 +174,13 @@ async def choose_city(message: Message, state: FSMContext):
 # ІНШЕ МІСТО
 # =========================
 
-@router.message(lambda message: message.text == "✏️ Інше місто")
-async def other_city(message: Message, state: FSMContext):
+@router.message(
+    lambda message: message.text == "✏️ Інше місто"
+)
+async def other_city(
+    message: Message,
+    state: FSMContext
+):
 
     await state.set_state(
         CityState.waiting_for_city
@@ -158,13 +200,20 @@ async def other_city(message: Message, state: FSMContext):
 # ОБРОБКА ВВЕДЕНОГО МІСТА
 # =========================
 
-@router.message(CityState.waiting_for_city)
-async def change_city(message: Message, state: FSMContext):
+@router.message(
+    CityState.waiting_for_city
+)
+async def change_city(
+    message: Message,
+    state: FSMContext
+):
 
     if not message.text:
+
         await message.answer(
             "❌ Напишіть назву міста текстом."
         )
+
         return
 
     city = message.text.strip()
@@ -176,14 +225,21 @@ async def change_city(message: Message, state: FSMContext):
         f"city={city}"
     )
 
-    weather = get_weather(city)
+    weather = await __import__(
+        "asyncio"
+    ).to_thread(
+        get_weather,
+        city
+    )
 
     if weather is None:
+
         await message.answer(
             "❌ Не вдалося знайти це місто.\n\n"
             "Спробуйте написати назву англійською.\n"
             "Наприклад: Kyiv, Lviv, Odesa."
         )
+
         return
 
     save_city(
@@ -202,5 +258,7 @@ async def change_city(message: Message, state: FSMContext):
     await message.answer(
         f"✅ Місто змінено на <b>{city}</b>",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=get_main_menu(
+            user_id
+        )
     )
