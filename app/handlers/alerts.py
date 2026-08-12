@@ -11,42 +11,132 @@ from app.services.alerts import get_alerts
 router = Router()
 
 
-@router.message(lambda message: message.text == "🚨 Тривоги")
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+
+def get_duration(since_value):
+    if not since_value:
+        return "невідомо", "невідомо"
+
+    try:
+        utc_time = datetime.fromisoformat(
+            since_value.replace("Z", "+00:00")
+        )
+
+        local_time = utc_time.astimezone(KYIV_TZ)
+        now = datetime.now(KYIV_TZ)
+
+        duration = now - local_time
+        minutes = max(
+            0,
+            int(duration.total_seconds() // 60)
+        )
+
+        if minutes < 60:
+            duration_text = f"{minutes} хв"
+        else:
+            hours = minutes // 60
+            mins = minutes % 60
+
+            if mins:
+                duration_text = (
+                    f"{hours} год {mins} хв"
+                )
+            else:
+                duration_text = f"{hours} год"
+
+        since = local_time.strftime("%H:%M")
+
+        return since, duration_text
+
+    except Exception as e:
+        print(
+            f"❌ Помилка обробки часу тривоги: {e}"
+        )
+
+        return "невідомо", "невідомо"
+
+
+@router.message(
+    lambda message: message.text == "🚨 Тривоги"
+)
 async def alerts(message: Message):
 
     city = get_city(message.from_user.id)
 
+    print(
+        f"🚨 Перевірка тривоги | "
+        f"user_id={message.from_user.id} | "
+        f"city={city}"
+    )
+
     data = get_alerts()
 
     if data is None:
+
         await message.answer(
-            "❌ Не вдалося отримати інформацію."
+            "❌ Не вдалося отримати "
+            "актуальну інформацію про тривоги."
         )
+
         return
+
+    raions = data.get("raions", [])
+    oblasts = data.get("oblasts", [])
+
+    print(
+        f"🚨 API | "
+        f"raions={len(raions)} | "
+        f"oblasts={len(oblasts)}"
+    )
 
     region_alert = None
 
     # =====================================================
-    # КИЇВ — окремо від Київської області
+    # КИЇВ
     # =====================================================
 
     if city == "Київ":
 
-        for r in data.get("raions", []):
+        for item in raions + oblasts:
 
-            name = r.get("name", "").strip().lower()
-            oblast = r.get("oblast", "").strip().lower()
+            name = (
+                item.get("name", "")
+                .strip()
+                .lower()
+            )
 
-            # Не плутаємо Київ із Київською областю
-            if name == "м. київ" or name == "київ":
-                region_alert = r
-                break
+            oblast = (
+                item.get("oblast", "")
+                .strip()
+                .lower()
+            )
+
+            key = (
+                item.get("key", "")
+                .strip()
+                .lower()
+            )
 
             if (
-                name == "київський район"
-                and oblast == "м. київ"
+                name in (
+                    "київ",
+                    "м. київ",
+                    "місто київ"
+                )
+                or key in (
+                    "київ",
+                    "м. київ",
+                    "місто київ"
+                )
             ):
-                region_alert = r
+                region_alert = item
+
+                print(
+                    f"🔴 Знайдено тривогу Києва: "
+                    f"{item}"
+                )
+
                 break
 
     # =====================================================
@@ -60,60 +150,61 @@ async def alerts(message: Message):
             [city.lower()]
         )
 
-        for r in data.get("raions", []):
+        keywords = [
+            word.lower()
+            for word in keywords
+        ]
 
-            name = r.get("name", "").lower()
-            oblast = r.get("oblast", "").lower()
+        for item in raions + oblasts:
 
-            text = f"{name} {oblast}"
+            name = (
+                item.get("name", "")
+                .lower()
+            )
 
-            if any(word.lower() in text for word in keywords):
-                region_alert = r
+            oblast = (
+                item.get("oblast", "")
+                .lower()
+            )
+
+            key = (
+                item.get("key", "")
+                .lower()
+            )
+
+            search_text = (
+                f"{name} "
+                f"{oblast} "
+                f"{key}"
+            )
+
+            if any(
+                word in search_text
+                for word in keywords
+            ):
+
+                region_alert = item
+
+                print(
+                    f"🔴 Знайдено тривогу: "
+                    f"{item}"
+                )
+
                 break
 
     # =====================================================
-    # ПОКАЗУЄМО РЕЗУЛЬТАТ
+    # АКТИВНА ТРИВОГА
     # =====================================================
 
     if region_alert:
 
-        since_value = region_alert.get("since")
+        since_value = region_alert.get(
+            "since"
+        )
 
-        if since_value:
-
-            utc_time = datetime.fromisoformat(
-                since_value.replace("Z", "+00:00")
-            )
-
-            local_time = utc_time.astimezone(
-                ZoneInfo("Europe/Kyiv")
-            )
-
-            now = datetime.now(
-                ZoneInfo("Europe/Kyiv")
-            )
-
-            duration = now - local_time
-
-            minutes = int(
-                duration.total_seconds() // 60
-            )
-
-            if minutes < 60:
-                duration_text = f"{minutes} хв"
-            else:
-                hours = minutes // 60
-                mins = minutes % 60
-
-                duration_text = (
-                    f"{hours} год {mins} хв"
-                )
-
-            since = local_time.strftime("%H:%M")
-
-        else:
-            since = "невідомо"
-            duration_text = "невідомо"
+        since, duration_text = get_duration(
+            since_value
+        )
 
         text = (
             "🚨 <b>Повітряна тривога</b>\n\n"
@@ -124,7 +215,16 @@ async def alerts(message: Message):
             "⚠️ Будьте в безпечному місці."
         )
 
+    # =====================================================
+    # ТРИВОГИ НЕМАЄ
+    # =====================================================
+
     else:
+
+        print(
+            f"🟢 Активної тривоги не знайдено | "
+            f"city={city}"
+        )
 
         text = (
             f"🟢 <b>{city}</b>\n\n"
