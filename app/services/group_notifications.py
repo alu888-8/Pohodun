@@ -16,6 +16,10 @@ from app.utils.weather_icons import get_weather_icon
 from app.data.regions import CITY_REGIONS
 
 
+# =====================================================
+# НАЛАШТУВАННЯ
+# =====================================================
+
 GROUP_CHAT_ID = -493936504
 
 KYIV_TIMEZONE = ZoneInfo("Europe/Kyiv")
@@ -43,7 +47,6 @@ async def send_to_group(
     bot: Bot,
     text: str
 ):
-
     try:
 
         await bot.send_message(
@@ -240,7 +243,6 @@ def get_city_threats(
     if not data:
         return []
 
-
     threats = data.get(
         "threats",
         []
@@ -263,7 +265,6 @@ def get_city_threats(
         word.lower()
         for word in keywords
     ]
-
 
     result = []
 
@@ -322,7 +323,6 @@ def get_city_threats(
             f"{explanation}"
         ).lower()
 
-
         if any(
             word in search_text
             for word in keywords
@@ -331,7 +331,6 @@ def get_city_threats(
             result.append(
                 threat
             )
-
 
     return result
 
@@ -348,13 +347,17 @@ def get_threat_signature(
     Створює стабільний підпис загроз.
 
     Порядок загроз не має значення.
-    Якщо змінився текст, тип,
-    район або кількість підтверджень —
+
+    Якщо змінився:
+    - текст
+    - тип
+    - район
+    - населений пункт
+
     стан вважається зміненим.
     """
 
     signatures = []
-
 
     for threat in threats:
 
@@ -365,30 +368,35 @@ def get_threat_signature(
                     ""
                 )
             ),
+
             str(
                 threat.get(
                     "title",
                     ""
                 )
             ),
+
             str(
                 threat.get(
                     "region",
                     ""
                 )
             ),
+
             str(
                 threat.get(
                     "district",
                     ""
                 )
             ),
+
             str(
                 threat.get(
                     "locality",
                     ""
                 )
             ),
+
             str(
                 threat.get(
                     "explanationShort",
@@ -400,7 +408,6 @@ def get_threat_signature(
         signatures.append(
             signature
         )
-
 
     return tuple(
         sorted(signatures)
@@ -441,16 +448,14 @@ def format_threats(
     if not threats:
 
         return (
-            f"🟢 <b>ЗАГРОЗ ПОБЛИЗУ НЕМАЄ</b>\n\n"
+            "🟢 <b>ЗАГРОЗ ПОБЛИЗУ НЕМАЄ</b>\n\n"
             f"📍 <b>{city}</b>"
         )
-
 
     lines = [
         f"🛰 <b>ЗАГРОЗИ ДЛЯ {city.upper()}</b>",
         ""
     ]
-
 
     for threat in threats:
 
@@ -492,11 +497,9 @@ def format_threats(
             or ""
         )
 
-
         lines.append(
             f"{icon} <b>{title}</b>"
         )
-
 
         if region:
 
@@ -504,13 +507,11 @@ def format_threats(
                 f"📍 {region}"
             )
 
-
         if locality:
 
             lines.append(
                 f"📌 {locality}"
             )
-
 
         if explanation:
 
@@ -518,9 +519,7 @@ def format_threats(
                 explanation
             )
 
-
         lines.append("")
-
 
     return "\n".join(
         lines
@@ -538,12 +537,10 @@ async def group_alert_monitor(
     global _last_alert_states
     global _last_threat_states
 
-
     print(
         "🚨 Моніторинг тривог та загроз "
         "для всіх міст запущений"
     )
-
 
     while True:
 
@@ -567,8 +564,11 @@ async def group_alert_monitor(
             )
 
 
-            cities = get_users_cities()
+            # =========================================
+            # ОТРИМУЄМО МІСТА
+            # =========================================
 
+            cities = get_users_cities()
 
             print(
                 f"📍 Моніторимо міста: {cities}"
@@ -580,7 +580,6 @@ async def group_alert_monitor(
             # =========================================
 
             for city in cities:
-
 
                 # =====================================
                 # ТРИВОГИ
@@ -632,11 +631,9 @@ async def group_alert_monitor(
                             "у безпечне місце."
                         )
 
-
                         _last_alert_states[
                             city
                         ] = True
-
 
                         print(
                             f"🔴 Початок тривоги: "
@@ -662,11 +659,9 @@ async def group_alert_monitor(
                             "✅ Небезпека минула."
                         )
 
-
                         _last_alert_states[
                             city
                         ] = False
-
 
                         print(
                             f"🟢 Відбій тривоги: "
@@ -685,13 +680,11 @@ async def group_alert_monitor(
                         threats_data
                     )
 
-
                     current_signature = (
                         get_threat_signature(
                             city_threats
                         )
                     )
-
 
                     previous_signature = (
                         _last_threat_states.get(
@@ -735,12 +728,14 @@ async def group_alert_monitor(
                             and current_signature
                         ):
 
+                            threats_text = format_threats(
+                                city,
+                                city_threats
+                            )
+
                             text = (
                                 "🚨 <b>НОВІ ЗАГРОЗИ!</b>\n\n"
-                                f"{format_threats("
-                                    city,
-                                    city_threats
-                                )}\n\n"
+                                f"{threats_text}\n\n"
                                 "⚠️ Будьте уважні."
                             )
 
@@ -769,12 +764,14 @@ async def group_alert_monitor(
 
                         else:
 
+                            threats_text = format_threats(
+                                city,
+                                city_threats
+                            )
+
                             text = (
                                 "🛰 <b>ОНОВЛЕННЯ ЗАГРОЗ</b>\n\n"
-                                f"{format_threats("
-                                    city,
-                                    city_threats
-                                )}"
+                                f"{threats_text}"
                             )
 
 
@@ -783,11 +780,9 @@ async def group_alert_monitor(
                             text
                         )
 
-
                         _last_threat_states[
                             city
                         ] = current_signature
-
 
                         print(
                             f"🛰 Загрози змінилися: "
@@ -952,10 +947,10 @@ async def morning_weather_scheduler(
 
 
         print(
-            f"⏰ Наступна погода: "
-            f"{next_run.strftime("
+            "⏰ Наступна погода: "
+            + next_run.strftime(
                 "%Y-%m-%d %H:%M:%S"
-            )}"
+            )
         )
 
 
