@@ -38,7 +38,7 @@ async def group_alert_monitor(bot: Bot):
             )
 
             # ==========================================
-            # ОДИН ЗАПИТ ТРИВОГ
+            # ОДИН ЗАПИТ ТІЛЬКИ ДЛЯ ТРИВОГ
             # ==========================================
 
             alerts_data = await asyncio.to_thread(
@@ -102,7 +102,8 @@ async def group_alert_monitor(bot: Bot):
                             "🚨 <b>ПОВІТРЯНА ТРИВОГА!</b>\n\n"
                             f"📍 <b>{city}</b>\n\n"
                             "⚠️ Негайно перейдіть "
-                            "у безпечне місце."
+                            "у безпечне місце.",
+
                         )
 
                         state["alert"] = True
@@ -112,7 +113,7 @@ async def group_alert_monitor(bot: Bot):
                         )
 
                     # ==================================
-                    # ВІДБІЙ
+                    # ВІДБІЙ ТРИВОГИ
                     # ==================================
 
                     elif not active and previous:
@@ -123,7 +124,8 @@ async def group_alert_monitor(bot: Bot):
                             "🟢 <b>ВІДБІЙ "
                             "ПОВІТРЯНОЇ ТРИВОГИ</b>\n\n"
                             f"📍 <b>{city}</b>\n\n"
-                            "✅ Небезпека минула."
+                            "✅ Небезпека минула.",
+
                         )
 
                         state["alert"] = False
