@@ -9,152 +9,68 @@ from app.data.cities import CITY_API
 from app.services.forecast import get_forecast
 from app.utils.weather_icons import get_weather_icon
 
-
 router = Router()
 
 
-@router.message(
-    lambda message: message.text == "📅 Прогноз"
-)
+@router.message(lambda message: message.text == "📅 Прогноз")
 async def forecast(message: Message):
 
-    city_ua = get_city(
-        message.from_user.id
-    )
+    city_ua = get_city(message.from_user.id)
+    city_api = CITY_API.get(city_ua, city_ua)
 
-    city_api = CITY_API.get(
-        city_ua,
-        city_ua
-    )
-
-    print(
-        f"📅 Прогноз | "
-        f"user_id={message.from_user.id} | "
-        f"city={city_ua} | "
-        f"api_city={city_api}"
-    )
-
-    # ==========================================
-    # Отримуємо прогноз у окремому потоці
-    # ==========================================
-
+    # Не блокуємо Telegram-бота під час запиту WeatherAPI
     data = await asyncio.to_thread(
         get_forecast,
         city_api
     )
 
     if data is None:
-
         await message.answer(
             "❌ Не вдалося отримати прогноз."
         )
-
         return
-
-    # ==========================================
-    # Перевіряємо структуру відповіді
-    # ==========================================
 
     try:
-
         days = data["forecast"]["forecastday"]
 
-    except (
-        KeyError,
-        TypeError
-    ) as e:
+        names = [
+            "📍 Сьогодні",
+            "🌅 Завтра",
+            "📆 Післязавтра"
+        ]
 
-        print(
-            f"❌ Помилка структури прогнозу: {e}"
+        text = (
+            f"📅 <b>Прогноз погоди</b>\n\n"
+            f"📍 <b>{city_ua}</b>\n"
         )
 
-        await message.answer(
-            "❌ API повернув неправильний "
-            "формат прогнозу."
-        )
+        for i, day in enumerate(days):
 
-        return
+            condition = day["day"]["condition"]["text"]
+            icon = get_weather_icon(condition)
 
-    if not days:
-
-        await message.answer(
-            "❌ Прогноз для цього міста відсутній."
-        )
-
-        return
-
-    names = [
-        "📍 Сьогодні",
-        "🌅 Завтра",
-        "📆 Післязавтра"
-    ]
-
-    text = (
-        f"📅 <b>Прогноз погоди</b>\n\n"
-        f"📍 <b>{city_ua}</b>\n"
-    )
-
-    # ==========================================
-    # Формуємо прогноз
-    # ==========================================
-
-    for i, day in enumerate(days[:3]):
-
-        try:
-
-            condition = (
-                day["day"]["condition"]["text"]
-            )
-
-            icon = get_weather_icon(
-                condition
-            )
-
-            max_temp = round(
-                day["day"]["maxtemp_c"]
-            )
-
-            min_temp = round(
-                day["day"]["mintemp_c"]
-            )
-
-            rain = day["day"].get(
-                "daily_chance_of_rain",
-                0
-            )
-
-            day_name = (
-                names[i]
-                if i < len(names)
-                else f"📆 День {i + 1}"
-            )
+            max_temp = round(day["day"]["maxtemp_c"])
+            min_temp = round(day["day"]["mintemp_c"])
+            rain = day["day"]["daily_chance_of_rain"]
 
             text += (
-                f"\n<b>{day_name}</b>\n"
+                f"\n<b>{names[i]}</b>\n"
                 f"{icon} {condition}\n"
                 f"🌡 {min_temp}°C ... {max_temp}°C\n"
-                f"💧 Ймовірність опадів: "
-                f"{rain}%\n"
+                f"💧 Ймовірність опадів: {rain}%\n"
             )
 
-        except (
-            KeyError,
-            TypeError,
-            ValueError
-        ) as e:
+        await message.answer(
+            text,
+            parse_mode="HTML"
+        )
 
-            print(
-                f"❌ Помилка обробки дня "
-                f"{i}: {e}"
-            )
+    except Exception as e:
 
-            continue
+        print(
+            f"❌ Помилка обробки прогнозу: {e}"
+        )
 
-    # ==========================================
-    # Відправляємо результат
-    # ==========================================
-
-    await message.answer(
-        text,
-        parse_mode="HTML"
-    )
+        await message.answer(
+            "❌ Не вдалося сформувати прогноз."
+        )

@@ -1,3 +1,5 @@
+import asyncio
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -17,24 +19,51 @@ from app.services.ai_joke import generate_daily_content
 
 from app.utils.weather_icons import get_weather_icon
 
+
 router = Router()
 
 
-@router.message(lambda message: message.text == "🌤 Погода зараз")
+@router.message(
+    lambda message: message.text == "🌤 Погода зараз"
+)
 async def weather_now(message: Message):
 
-    # Отримуємо місто конкретного користувача
-    city_ua = get_city(message.from_user.id)
+    user_id = message.from_user.id
 
-    # Перетворюємо назву для WeatherAPI
-    city_api = CITY_API.get(city_ua, city_ua)
+    # ==========================================
+    # МІСТО
+    # ==========================================
 
-    weather = get_weather(city_api)
+    city_ua = await asyncio.to_thread(
+        get_city,
+        user_id
+    )
+
+    city_api = CITY_API.get(
+        city_ua,
+        city_ua
+    )
+
+    print(
+        f"🌤 Погода | user={user_id} | city={city_ua}"
+    )
+
+    # ==========================================
+    # ПОГОДА
+    # ==========================================
+
+    # requests не блокує Telegram-бота
+    weather = await asyncio.to_thread(
+        get_weather,
+        city_api
+    )
 
     if weather is None:
+
         await message.answer(
             "❌ Не вдалося отримати погоду."
         )
+
         return
 
     temp = weather["temp"]
@@ -43,39 +72,49 @@ async def weather_now(message: Message):
     wind = weather["wind"]
     description = weather["condition"]
 
-    # Автоматична іконка погоди
-    icon = get_weather_icon(description)
+    icon = get_weather_icon(
+        description
+    )
 
     # ==========================================
-    # КОНТЕНТ ДНЯ ДЛЯ КОНКРЕТНОГО МІСТА
+    # КОНТЕНТ ДНЯ
     # ==========================================
 
     today = datetime.now(
         ZoneInfo("Europe/Kyiv")
     ).strftime("%Y-%m-%d")
 
-    # Шукаємо контент саме для цього міста
-    daily_content = get_daily_content(city_ua)
+    # SQLite теж виносимо з event loop
+    daily_content = await asyncio.to_thread(
+        get_daily_content,
+        city_ua
+    )
 
-    # Якщо для цього міста сьогодні контенту ще немає —
-    # генеруємо його через AI
+    # ==========================================
+    # ЯКЩО КОНТЕНТУ НА СЬОГОДНІ НЕМАЄ
+    # ==========================================
+
     if (
         daily_content is None
         or daily_content["date"] != today
     ):
 
         print(
-            f"🤖 Генеруємо контент дня для {city_ua}: {today}"
+            f"🤖 Генеруємо контент дня "
+            f"для {city_ua}: {today}"
         )
 
-        daily_content = generate_daily_content(
+        # AI-запит НЕ блокує Telegram-бота
+        daily_content = await asyncio.to_thread(
+            generate_daily_content,
             city=city_ua,
             weather=weather
         )
 
         if daily_content is not None:
 
-            save_daily_content(
+            await asyncio.to_thread(
+                save_daily_content,
                 city=city_ua,
                 content_date=today,
                 joke=daily_content["joke"],
@@ -83,16 +122,17 @@ async def weather_now(message: Message):
             )
 
             print(
-                f"✅ Контент дня збережено для {city_ua}"
+                f"✅ Контент дня збережено "
+                f"для {city_ua}"
             )
 
         else:
 
             print(
-                f"❌ Не вдалося згенерувати контент для {city_ua}"
+                f"❌ AI-контент не отримано "
+                f"для {city_ua}"
             )
 
-            # Запасний варіант, якщо AI недоступний
             daily_content = {
                 "joke": (
                     "Погодун сьогодні вирішив "
@@ -108,11 +148,12 @@ async def weather_now(message: Message):
     else:
 
         print(
-            f"📦 Використовуємо контент дня для {city_ua}: {today}"
+            f"📦 Використовуємо готовий "
+            f"контент дня для {city_ua}: {today}"
         )
 
     # ==========================================
-    # ТЕКСТ ПОВІДОМЛЕННЯ
+    # ФОРМУЄМО ПОВІДОМЛЕННЯ
     # ==========================================
 
     joke = daily_content["joke"]
@@ -143,4 +184,9 @@ async def weather_now(message: Message):
     await message.answer(
         text,
         parse_mode="HTML"
+    )
+
+    print(
+        f"✅ Погода відправлена | "
+        f"user={user_id} | city={city_ua}"
     )

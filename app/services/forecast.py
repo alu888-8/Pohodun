@@ -3,9 +3,7 @@ import requests
 from config import WEATHER_API_KEY, DEFAULT_CITY
 
 
-WEATHER_API_URL = (
-    "https://api.weatherapi.com/v1/forecast.json"
-)
+URL = "https://api.weatherapi.com/v1/forecast.json"
 
 
 def get_forecast(city=None):
@@ -23,60 +21,29 @@ def get_forecast(city=None):
     try:
 
         response = requests.get(
-            WEATHER_API_URL,
+            URL,
             params=params,
-            timeout=(3, 7),
+            timeout=(3, 7)
         )
 
         print(
-            f"📅 Forecast API | "
-            f"city={city} | "
-            f"status={response.status_code}"
+            f"🌤 Forecast API status: {response.status_code}"
         )
 
         if response.status_code != 200:
 
             print(
-                f"❌ Forecast API error: "
-                f"{response.text}"
+                f"❌ Forecast API error: {response.text}"
             )
 
             return None
 
-        data = response.json()
-
-        if "forecast" not in data:
-
-            print(
-                "❌ Forecast API: "
-                "у відповіді немає forecast"
-            )
-
-            return None
-
-        return data
+        return response.json()
 
     except requests.Timeout:
 
         print(
-            f"⏱️ Forecast API timeout | "
-            f"city={city}"
-        )
-
-        return None
-
-    except requests.RequestException as e:
-
-        print(
-            f"❌ Forecast API request error: {e}"
-        )
-
-        return None
-
-    except ValueError as e:
-
-        print(
-            f"❌ Forecast API JSON error: {e}"
+            "⏱️ Forecast API: перевищено час очікування"
         )
 
         return None
@@ -84,7 +51,7 @@ def get_forecast(city=None):
     except Exception as e:
 
         print(
-            f"❌ Forecast API unexpected error: {e}"
+            f"❌ Помилка Forecast API: {e}"
         )
 
         return None
