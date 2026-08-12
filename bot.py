@@ -18,9 +18,9 @@ from app.handlers.settings import router as settings_router
 from app.handlers.admin import router as admin_router
 
 from app.services.group_notifications import (
-    group_alert_monitor,
-    morning_weather_scheduler
+    group_alert_monitor
 )
+
 
 # ID Telegram-групи
 GROUP_CHAT_ID = -493936504
@@ -60,27 +60,6 @@ async def main():
     print("✅ Pohodun запущений")
 
     # =========================
-    # ТЕСТОВЕ ПОВІДОМЛЕННЯ В ГРУПУ
-    # =========================
-
-    try:
-
-        await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
-            text="🤖 Pohodun підключився до групи!"
-        )
-
-        print(
-            "✅ Повідомлення в групу відправлено"
-        )
-
-    except Exception as e:
-
-        print(
-            f"❌ Помилка відправки в групу: {e}"
-        )
-
-    # =========================
     # МОНІТОРИНГ ТРИВОГ
     # =========================
 
@@ -90,18 +69,6 @@ async def main():
 
     print(
         "🚨 Моніторинг тривог для групи запущений"
-    )
-
-    # =========================
-    # РАНКОВА ПОГОДА
-    # =========================
-
-    asyncio.create_task(
-        morning_weather_scheduler(bot)
-    )
-
-    print(
-        "🌅 Планувальник ранкової погоди запущений"
     )
 
     # =========================
