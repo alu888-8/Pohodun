@@ -18,7 +18,8 @@ from app.handlers.settings import router as settings_router
 from app.handlers.admin import router as admin_router
 
 from app.services.group_notifications import (
-    group_alert_monitor
+    group_alert_monitor,
+    morning_weather_scheduler
 )
 
 
@@ -34,13 +35,17 @@ async def main():
 
     init_db()
 
+
     # =========================
     # BOT
     # =========================
 
-    bot = Bot(token=BOT_TOKEN)
+    bot = Bot(
+        token=BOT_TOKEN
+    )
 
     dp = Dispatcher()
+
 
     # =========================
     # РОУТЕРИ
@@ -57,7 +62,11 @@ async def main():
     dp.include_router(settings_router)
     dp.include_router(admin_router)
 
-    print("✅ Pohodun запущений")
+
+    print(
+        "✅ Pohodun запущений"
+    )
+
 
     # =========================
     # МОНІТОРИНГ ТРИВОГ
@@ -68,15 +77,36 @@ async def main():
     )
 
     print(
-        "🚨 Моніторинг тривог для групи запущений"
+        "🚨 Моніторинг початку "
+        "та відбою тривог запущений"
     )
+
+
+    # =========================
+    # РАНКОВА ПОГОДА 08:00
+    # =========================
+
+    asyncio.create_task(
+        morning_weather_scheduler(bot)
+    )
+
+    print(
+        "🌅 Планувальник ранкової "
+        "погоди запущений"
+    )
+
 
     # =========================
     # ЗАПУСК БОТА
     # =========================
 
-    await dp.start_polling(bot)
+    await dp.start_polling(
+        bot
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    asyncio.run(
+        main()
+    )
