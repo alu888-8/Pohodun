@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 
 from datetime import datetime, timedelta
@@ -8,6 +9,7 @@ from aiogram import Bot
 
 from app.services.alerts import get_alerts
 from app.services.threats import get_threats
+
 from app.services.weather import get_weather
 from app.services.advice import get_advice
 
@@ -15,39 +17,46 @@ from app.utils.weather_icons import get_weather_icon
 from app.data.regions import CITY_REGIONS
 
 
-# =====================================================
+# ============================================================
 # НАЛАШТУВАННЯ
-# =====================================================
+# ============================================================
 
 GROUP_CHAT_ID = -493936504
 
 KYIV_TIMEZONE = ZoneInfo("Europe/Kyiv")
 
-# Перевірка кожні 10 секунд
-CHECK_INTERVAL = 10
+# Перевірка тривог/загроз кожні 15 секунд
+MONITOR_INTERVAL = 15
 
 
-# =====================================================
-# СТАН ТРИВОГ
-# =====================================================
+# ============================================================
+# СТАНИ МОНІТОРИНГУ
+# ============================================================
 
-_last_alert_states = {}
+# Наприклад:
+#
+# {
+#     "Київ": {
+#         "alert": True,
+#         "threats": "...",
+#     },
+#     "Одеса": {
+#         "alert": False,
+#         "threats": "...",
+#     }
+# }
+
+_city_states = {}
 
 
-# =====================================================
-# СТАН ЗАГРОЗ
-# =====================================================
-
-_last_threat_states = {}
-
-
-# =====================================================
+# ============================================================
 # ВІДПРАВКА В ГРУПУ
-# =====================================================
+# ============================================================
 
 async def send_to_group(bot: Bot, text: str):
 
     try:
+
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text=text,
@@ -57,18 +66,34 @@ async def send_to_group(bot: Bot, text: str):
         print("✅ Повідомлення відправлено в групу")
 
     except Exception as e:
+
         print(
-            f"❌ Помилка відправки в групу: {e}"
+            f"❌ Не вдалося відправити повідомлення в групу: {e}"
         )
 
 
-# =====================================================
-# МІСТА КОРИСТУВАЧІВ
-# =====================================================
+# ============================================================
+# ОТРИМАННЯ МІСТ КОРИСТУВАЧІВ
+# ============================================================
 
 def get_users_cities():
 
+    """
+    Отримує всі УНІКАЛЬНІ міста,
+    які зараз вибрали користувачі.
+
+    Якщо:
+        користувач 1 -> Київ
+        користувач 2 -> Київ
+        користувач 3 -> Одеса
+
+    результат:
+
+        ["Київ", "Одеса"]
+    """
+
     try:
+
         conn = sqlite3.connect(
             "app/database/users.db"
         )
@@ -76,7 +101,12 @@ def get_users_cities():
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT DISTINCT city FROM users"
+            """
+            SELECT DISTINCT city
+            FROM users
+            WHERE city IS NOT NULL
+            AND TRIM(city) != ''
+            """
         )
 
         rows = cursor.fetchall()
@@ -86,25 +116,32 @@ def get_users_cities():
         cities = []
 
         for row in rows:
-            if row[0]:
-                cities.append(row[0])
+
+            city = row[0]
+
+            if city:
+
+                city = city.strip()
+
+                if city and city not in cities:
+                    cities.append(city)
 
         return cities
 
     except Exception as e:
 
         print(
-            f"❌ Помилка отримання міст: {e}"
+            f"❌ Помилка отримання міст користувачів: {e}"
         )
 
         return []
 
 
-# =====================================================
+# ============================================================
 # НОРМАЛІЗАЦІЯ ТЕКСТУ
-# =====================================================
+# ============================================================
 
-def normalize(value):
+def normalize_text(value):
 
     if value is None:
         return ""
@@ -112,104 +149,88 @@ def normalize(value):
     return str(value).strip().lower()
 
 
-# =====================================================
-# ПЕРЕВІРКА ТРИВОГИ ДЛЯ МІСТА
-# =====================================================
+# ============================================================
+# ПЕРЕВІРКА МІСТА ДЛЯ ТРИВОГ
+# ============================================================
 
-def is_city_alert_active(city, data):
+def get_city_alert_item(city, data):
 
     """
-    Перевіряє саме статус тривоги міста.
+    Повертає запис API для конкретного міста.
 
-    Київ і Київська область
-    розглядаються окремо.
+    Важливо:
+    Київ НЕ плутаємо з Київською областю.
     """
 
     if not data:
-        return False
+        return None
+
+    city_normalized = normalize_text(city)
 
     raions = data.get("raions", [])
     oblasts = data.get("oblasts", [])
 
-    # =================================================
+    items = raions + oblasts
+
+    # ========================================================
     # КИЇВ
-    # =================================================
+    # ========================================================
 
-    if city == "Київ":
+    if city_normalized in (
+        "київ",
+        "м. київ",
+        "місто київ"
+    ):
 
-        for item in raions + oblasts:
+        for item in items:
 
-            name = normalize(
+            name = normalize_text(
                 item.get("name")
             )
 
-            key = normalize(
-                item.get("key")
-            )
-
-            oblast = normalize(
+            oblast = normalize_text(
                 item.get("oblast")
             )
 
-            # Сам Київ
+            key = normalize_text(
+                item.get("key")
+            )
+
             if name in (
-                "київ",
                 "м. київ",
+                "київ",
                 "місто київ"
             ):
-                return True
+
+                if oblast in (
+                    "",
+                    "м. київ",
+                    "київ",
+                    "місто київ"
+                ):
+
+                    return item
 
             if key in (
-                "київ",
                 "м. київ",
+                "київ",
                 "місто київ"
             ):
-                return True
 
-            # Київський район,
-            # якщо API повертає його саме як
-            # частину міста Київ
+                return item
+
             if (
                 name == "київський район"
                 and oblast == "м. київ"
             ):
-                return True
 
-        return False
+                return item
 
-    # =================================================
+        return None
+
+    # ========================================================
     # ІНШІ МІСТА
-    # =================================================
-
-    city_normalized = normalize(city)
-
-    # Спочатку шукаємо точну назву міста
-    for item in raions + oblasts:
-
-        name = normalize(
-            item.get("name")
-        )
-
-        key = normalize(
-            item.get("key")
-        )
-
-        if name in (
-            city_normalized,
-            f"м. {city_normalized}",
-            f"місто {city_normalized}"
-        ):
-            return True
-
-        if key in (
-            city_normalized,
-            f"м. {city_normalized}"
-        ):
-            return True
-
-    # =================================================
-    # ПОШУК ЧЕРЕЗ CITY_REGIONS
-    # =================================================
+    # ========================================================
 
     keywords = CITY_REGIONS.get(
         city,
@@ -217,277 +238,345 @@ def is_city_alert_active(city, data):
     )
 
     keywords = [
-        normalize(word)
+        normalize_text(word)
         for word in keywords
+        if word
     ]
 
-    for item in raions:
+    for item in items:
 
-        name = normalize(
+        name = normalize_text(
             item.get("name")
         )
 
-        oblast = normalize(
+        oblast = normalize_text(
             item.get("oblast")
         )
 
-        search_text = (
-            f"{name} {oblast}"
+        key = normalize_text(
+            item.get("key")
         )
 
-        if any(
-            word in search_text
-            for word in keywords
-            if word
-        ):
-            return True
+        search_text = (
+            f"{name} "
+            f"{oblast} "
+            f"{key}"
+        )
 
-    return False
+        for word in keywords:
+
+            if word and word in search_text:
+
+                return item
+
+    return None
 
 
-# =====================================================
-# ОТРИМАТИ ЗАГРОЗИ ДЛЯ МІСТА
-# =====================================================
+# ============================================================
+# СТАН ТРИВОГИ
+# ============================================================
+
+def is_city_alert_active(city, data):
+
+    item = get_city_alert_item(
+        city,
+        data
+    )
+
+    if item is None:
+        return False
+
+    return True
+
+
+# ============================================================
+# НОРМАЛІЗАЦІЯ ЗАГРОЗ
+# ============================================================
+
+def normalize_threats_data(data):
+
+    """
+    Робить стабільний JSON для порівняння.
+
+    Це важливо, щоб бот не писав
+    "ОНОВЛЕННЯ ЗАГРОЗ" кожні 15 секунд,
+    якщо фактично нічого не змінилося.
+    """
+
+    if data is None:
+        return ""
+
+    try:
+
+        return json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":")
+        )
+
+    except Exception:
+
+        return str(data)
+
+
+# ============================================================
+# ПОШУК ЗАГРОЗ ДЛЯ МІСТА
+# ============================================================
 
 def get_city_threats(city, data):
+
+    """
+    Витягує загрози, які стосуються конкретного міста.
+
+    Функція спеціально зроблена досить універсально,
+    тому що API загроз може містити різні поля.
+    """
 
     if not data:
         return []
 
-    threats = data.get(
-        "threats",
-        []
-    )
-
-    if not threats:
-        return []
+    city_normalized = normalize_text(city)
 
     keywords = CITY_REGIONS.get(
         city,
-        [city.lower()]
+        [city_normalized]
     )
 
     keywords = [
-        normalize(word)
+        normalize_text(word)
         for word in keywords
+        if word
     ]
 
-    # Для Києва додаємо явні варіанти.
-    # Це дозволяє бачити загрози в Києві
-    # та пов'язані з Київською областю.
-    if city == "Київ":
-
-        keywords = list(
-            set(
-                keywords
-                + [
-                    "київ",
-                    "м. київ",
-                    "київська область"
-                ]
-            )
-        )
+    # Для Києва не беремо Київську область
+    kyiv = city_normalized in (
+        "київ",
+        "м. київ",
+        "місто київ"
+    )
 
     result = []
 
+    # ========================================================
+    # ВИЗНАЧАЄМО СПИСОК ЗАГРОЗ
+    # ========================================================
+
+    if isinstance(data, list):
+
+        threats = data
+
+    elif isinstance(data, dict):
+
+        threats = (
+            data.get("threats")
+            or data.get("items")
+            or data.get("data")
+            or data.get("alerts")
+            or []
+        )
+
+        if isinstance(threats, dict):
+
+            threats = [
+                threats
+            ]
+
+    else:
+
+        threats = []
+
+    # ========================================================
+    # ПЕРЕБИРАЄМО ЗАГРОЗИ
+    # ========================================================
+
     for threat in threats:
 
-        region = normalize(
-            threat.get("region")
+        if not isinstance(threat, dict):
+            continue
+
+        # Збираємо весь текст запису
+        # для пошуку міста/області
+
+        values = []
+
+        for key, value in threat.items():
+
+            if isinstance(value, (str, int, float)):
+
+                values.append(
+                    str(value)
+                )
+
+            elif isinstance(value, list):
+
+                for x in value:
+
+                    if isinstance(
+                        x,
+                        (str, int, float)
+                    ):
+
+                        values.append(
+                            str(x)
+                        )
+
+        search_text = normalize_text(
+            " ".join(values)
         )
 
-        district = normalize(
-            threat.get("district")
-        )
+        # ====================================================
+        # КИЇВ
+        # ====================================================
 
-        locality = normalize(
-            threat.get("locality")
-        )
+        if kyiv:
 
-        title = normalize(
-            threat.get("title")
-        )
+            # Київ повинен бути присутній,
+            # але не просто "Київська область"
 
-        explanation = normalize(
-            threat.get("explanationShort")
-        )
+            if (
+                "київська область" in search_text
+                and "київ" not in search_text.replace(
+                    "київська область",
+                    ""
+                )
+            ):
 
-        search_text = (
-            f"{region} "
-            f"{district} "
-            f"{locality} "
-            f"{title} "
-            f"{explanation}"
-        )
+                continue
 
-        if any(
-            word in search_text
-            for word in keywords
-            if word
-        ):
-            result.append(threat)
+            if (
+                "м. київ" in search_text
+                or "місто київ" in search_text
+                or "курс" in search_text
+                and "київ" in search_text
+                or search_text.endswith("київ")
+                or "київ." in search_text
+                or "київ," in search_text
+            ):
+
+                result.append(threat)
+
+                continue
+
+            if (
+                "київ" in search_text
+                and "київська область" not in search_text
+            ):
+
+                result.append(threat)
+
+                continue
+
+        # ====================================================
+        # ІНШІ МІСТА
+        # ====================================================
+
+        else:
+
+            if any(
+                keyword in search_text
+                for keyword in keywords
+            ):
+
+                result.append(threat)
 
     return result
 
 
-# =====================================================
-# ПІДПИС ЗАГРОЗ
-# =====================================================
-
-def get_threat_signature(threats):
-
-    signatures = []
-
-    for threat in threats:
-
-        signature = (
-            normalize(
-                threat.get("type")
-            ),
-
-            normalize(
-                threat.get("title")
-            ),
-
-            normalize(
-                threat.get("region")
-            ),
-
-            normalize(
-                threat.get("district")
-            ),
-
-            normalize(
-                threat.get("locality")
-            ),
-
-            normalize(
-                threat.get("explanationShort")
-            ),
-
-            normalize(
-                threat.get("confirmed")
-            )
-        )
-
-        signatures.append(
-            signature
-        )
-
-    signatures.sort()
-
-    return tuple(signatures)
-
-
-# =====================================================
-# ІКОНКА ЗАГРОЗИ
-# =====================================================
-
-def get_threat_icon(threat_type):
-
-    return {
-
-        "uav": "🛸",
-        "missile": "🚀",
-        "ballistic": "💥",
-        "kab": "💣",
-        "mig31k": "✈️",
-        "recon": "👀",
-        "unknown": "❓"
-
-    }.get(
-        normalize(threat_type),
-        "❓"
-    )
-
-
-# =====================================================
-# ФОРМУВАННЯ ПОВІДОМЛЕННЯ ЗАГРОЗ
-# =====================================================
+# ============================================================
+# ФОРМУВАННЯ ТЕКСТУ ЗАГРОЗ
+# ============================================================
 
 def format_threats(city, threats):
+
+    """
+    Формує красиве повідомлення
+    для групи.
+    """
 
     if not threats:
 
         return (
-            f"🟢 <b>ЗАГРОЗ ПОБЛИЗУ НЕМАЄ — {city.upper()}</b>\n\n"
+            "🛰 <b>ЗАГРОЗ ПОБЛИЗУ НЕМАЄ</b>\n\n"
             f"📍 <b>{city}</b>\n\n"
             "✅ Активних загроз не виявлено."
         )
 
     lines = [
+        "🛰 <b>ОНОВЛЕННЯ ЗАГРОЗ</b>",
+        "",
         f"🛰 <b>ЗАГРОЗИ ДЛЯ {city.upper()}</b>",
         ""
     ]
 
     for threat in threats:
 
-        icon = get_threat_icon(
-            threat.get("type")
-        )
+        if not isinstance(threat, dict):
+            continue
 
-        title = (
-            threat.get(
-                "title",
-                "Невідома загроза"
-            )
-            or "Невідома загроза"
+        # Найчастіші поля API
+
+        threat_type = (
+            threat.get("type")
+            or threat.get("title")
+            or threat.get("name")
+            or "⚠️ Загроза"
         )
 
         region = (
-            threat.get(
-                "region",
-                ""
-            )
+            threat.get("oblast")
+            or threat.get("region")
+            or threat.get("area")
             or ""
         )
 
-        district = (
-            threat.get(
-                "district",
-                ""
-            )
+        location = (
+            threat.get("city")
+            or threat.get("settlement")
+            or threat.get("location")
+            or threat.get("place")
             or ""
         )
 
-        locality = (
-            threat.get(
-                "locality",
-                ""
-            )
+        description = (
+            threat.get("description")
+            or threat.get("text")
+            or threat.get("message")
             or ""
         )
 
-        explanation = (
-            threat.get(
-                "explanationShort",
-                ""
-            )
-            or ""
+        confirmed = (
+            threat.get("confirmed")
+            or threat.get("confirmations")
+            or threat.get("confirmation")
         )
 
         lines.append(
-            f"{icon} <b>{title}</b>"
+            f"🛸 <b>{threat_type}</b>"
         )
 
         if region:
+
             lines.append(
                 f"📍 {region}"
             )
 
-        if district:
+        if location:
+
             lines.append(
-                f"📌 {district}"
+                f"📌 {location}"
             )
 
-        if locality:
+        if description:
+
             lines.append(
-                f"📍 {locality}"
+                str(description)
             )
 
-        if explanation:
+        if confirmed is not None:
+
             lines.append(
-                str(explanation)
+                f"Підтверджень: {confirmed}."
             )
 
         lines.append("")
@@ -495,41 +584,62 @@ def format_threats(city, threats):
     return "\n".join(lines).strip()
 
 
-# =====================================================
-# ПОВІДОМЛЕННЯ ПРО ПОЧАТОК ТРИВОГИ
-# =====================================================
+# ============================================================
+# ОЧИЩЕННЯ СТАНІВ МІСТ
+# ============================================================
 
-def format_alert_start(city):
+def cleanup_old_cities(active_cities):
 
-    return (
-        "🚨 <b>ПОВІТРЯНА ТРИВОГА</b>\n\n"
-        f"📍 <b>{city}</b>\n\n"
-        "⚠️ Негайно перейдіть у безпечне місце."
+    """
+    Якщо користувач більше не вибирає місто,
+    його стан видаляється.
+
+    Наприклад:
+
+    було:
+        Київ
+        Одеса
+        Львів
+
+    всі користувачі пішли з Одеси.
+
+    стає:
+        Київ
+        Львів
+    """
+
+    active_set = set(
+        active_cities
     )
 
-
-# =====================================================
-# ПОВІДОМЛЕННЯ ПРО ВІДБІЙ
-# =====================================================
-
-def format_alert_end(city):
-
-    return (
-        "🟢 <b>ВІДБІЙ ПОВІТРЯНОЇ ТРИВОГИ</b>\n\n"
-        f"📍 <b>{city}</b>\n\n"
-        "✅ Небезпека минула."
+    old_cities = list(
+        _city_states.keys()
     )
 
+    for city in old_cities:
 
-# =====================================================
-# МОНІТОРИНГ ТРИВОГ І ЗАГРОЗ
-# =====================================================
+        if city not in active_set:
+
+            del _city_states[city]
+
+            print(
+                f"🗑 Місто прибрано з моніторингу: {city}"
+            )
+
+
+# ============================================================
+# ОСНОВНИЙ МОНІТОРИНГ
+# ============================================================
 
 async def group_alert_monitor(bot: Bot):
 
     print(
-        "🚨 Моніторинг тривог та загроз "
-        "запущений"
+        "🚨 Моніторинг тривог та загроз запущений"
+    )
+
+    print(
+        f"⏱ Інтервал перевірки: "
+        f"{MONITOR_INTERVAL} секунд"
     )
 
     while True:
@@ -537,30 +647,38 @@ async def group_alert_monitor(bot: Bot):
         try:
 
             # =================================================
-            # ОТРИМУЄМО МІСТА
+            # 1. ОТРИМУЄМО МІСТА КОРИСТУВАЧІВ
             # =================================================
 
             cities = await asyncio.to_thread(
                 get_users_cities
             )
 
+            print(
+                f"📍 Міста для моніторингу: {cities}"
+            )
+
+            # Якщо немає користувачів
+            # просто чекаємо наступної перевірки
+
             if not cities:
+
                 print(
-                    "📍 Немає міст для моніторингу"
+                    "ℹ️ Немає міст для моніторингу"
                 )
 
                 await asyncio.sleep(
-                    CHECK_INTERVAL
+                    MONITOR_INTERVAL
                 )
 
                 continue
 
-            print(
-                f"📍 Моніторимо міста: {cities}"
+            cleanup_old_cities(
+                cities
             )
 
             # =================================================
-            # ОТРИМУЄМО СТАН ТРИВОГ
+            # 2. ОДИН ЗАПИТ ТРИВОГ
             # =================================================
 
             alerts_data = await asyncio.to_thread(
@@ -570,260 +688,160 @@ async def group_alert_monitor(bot: Bot):
             if alerts_data is None:
 
                 print(
-                    "⚠️ Alerts API недоступний. "
-                    "Стан тривог не змінюємо."
+                    "⚠️ Не вдалося отримати API тривог"
                 )
 
-                await asyncio.sleep(
-                    CHECK_INTERVAL
+            # =================================================
+            # 3. ОДИН ЗАПИТ ЗАГРОЗ
+            # =================================================
+
+            threats_data = await asyncio.to_thread(
+                get_threats
+            )
+
+            if threats_data is None:
+
+                print(
+                    "⚠️ Не вдалося отримати API загроз"
                 )
 
-                continue
-
             # =================================================
-            # ВИЗНАЧАЄМО АКТИВНІ ТРИВОГИ
+            # 4. КОЖНЕ МІСТО ОКРЕМО
             # =================================================
-
-            active_cities = []
 
             for city in cities:
 
-                alert_active = (
-                    is_city_alert_active(
-                        city,
-                        alerts_data
-                    )
-                )
+                try:
 
-                previous_alert = (
-                    _last_alert_states.get(
-                        city
-                    )
-                )
+                    # Створюємо початковий стан
 
-                # =================================================
-                # ПЕРШИЙ ЗАПУСК
-                # =================================================
+                    if city not in _city_states:
 
-                if previous_alert is None:
+                        _city_states[city] = {
+                            "alert": None,
+                            "threats": None
+                        }
 
-                    _last_alert_states[
-                        city
-                    ] = alert_active
-
-                    print(
-                        f"📡 Початковий стан "
-                        f"{city}: "
-                        f"тривога={alert_active}"
-                    )
-
-                else:
+                    state = _city_states[city]
 
                     # =================================================
-                    # ПОЧАТОК ТРИВОГИ
+                    # ТРИВОГА
                     # =================================================
 
-                    if (
-                        alert_active
-                        and not previous_alert
-                    ):
+                    if alerts_data is not None:
 
-                        await send_to_group(
-                            bot,
-                            format_alert_start(city)
-                        )
-
-                        _last_alert_states[
-                            city
-                        ] = True
-
-                        # При новій тривозі
-                        # починаємо новий стан загроз
-                        _last_threat_states.pop(
+                        active = is_city_alert_active(
                             city,
-                            None
+                            alerts_data
                         )
 
-                        print(
-                            f"🚨 Почалася тривога: "
-                            f"{city}"
-                        )
+                        previous = state["alert"]
+
+                        # ---------------------------------------------
+                        # ПЕРШИЙ ЗАПУСК
+                        # ---------------------------------------------
+
+                        if previous is None:
+
+                            state["alert"] = active
+
+                            print(
+                                f"📡 Початковий стан "
+                                f"{city}: "
+                                f"тривога={active}"
+                            )
+
+                        # ---------------------------------------------
+                        # ПОЧАТОК ТРИВОГИ
+                        # ---------------------------------------------
+
+                        elif active and not previous:
+
+                            await send_to_group(
+                                bot,
+
+                                "🚨 <b>ПОВІТРЯНА ТРИВОГА!</b>\n\n"
+                                f"📍 <b>{city}</b>\n\n"
+                                "⚠️ Негайно перейдіть "
+                                "у безпечне місце."
+                            )
+
+                            state["alert"] = True
+
+                            print(
+                                f"🚨 Початок тривоги: {city}"
+                            )
+
+                        # ---------------------------------------------
+                        # ВІДБІЙ
+                        # ---------------------------------------------
+
+                        elif not active and previous:
+
+                            await send_to_group(
+                                bot,
+
+                                "🟢 <b>ВІДБІЙ "
+                                "ПОВІТРЯНОЇ ТРИВОГИ</b>\n\n"
+                                f"📍 <b>{city}</b>\n\n"
+                                "✅ Небезпека минула."
+                            )
+
+                            state["alert"] = False
+
+                            print(
+                                f"🟢 Відбій тривоги: {city}"
+                            )
 
                     # =================================================
-                    # ВІДБІЙ
+                    # ЗАГРОЗИ
                     # =================================================
 
-                    elif (
-                        not alert_active
-                        and previous_alert
-                    ):
+                    if threats_data is not None:
 
-                        await send_to_group(
-                            bot,
-                            format_alert_end(city)
-                        )
-
-                        _last_alert_states[
-                            city
-                        ] = False
-
-                        # Після відбою
-                        # старий стан загроз більше не потрібен
-                        _last_threat_states.pop(
-                            city,
-                            None
-                        )
-
-                        print(
-                            f"🟢 Відбій: "
-                            f"{city}"
-                        )
-
-                # Місто має активну тривогу
-                if alert_active:
-
-                    active_cities.append(city)
-
-            # =================================================
-            # ЗАГРОЗИ ЗАПИТУЄМО ТІЛЬКИ КОЛИ Є ТРИВОГА
-            # =================================================
-
-            threats_data = None
-
-            if active_cities:
-
-                threats_data = await asyncio.to_thread(
-                    get_threats
-                )
-
-                if threats_data is None:
-
-                    print(
-                        "⚠️ Threats API недоступний. "
-                        "Стан загроз не змінюємо."
-                    )
-
-                else:
-
-                    print(
-                        "🛰 Threats API отримано"
-                    )
-
-            # =================================================
-            # МОНІТОРИНГ ЗАГРОЗ
-            # =================================================
-
-            if threats_data is not None:
-
-                for city in active_cities:
-
-                    city_threats = (
-                        get_city_threats(
+                        city_threats = get_city_threats(
                             city,
                             threats_data
                         )
-                    )
 
-                    current_signature = (
-                        get_threat_signature(
-                            city_threats
-                        )
-                    )
-
-                    previous_signature = (
-                        _last_threat_states.get(
-                            city
-                        )
-                    )
-
-                    # =================================================
-                    # ПЕРШИЙ СТАН ЗАГРОЗ
-                    #
-                    # ВАЖЛИВО:
-                    # Після початку тривоги одразу
-                    # показуємо актуальні загрози.
-                    # =================================================
-
-                    if previous_signature is None:
-
-                        _last_threat_states[
-                            city
-                        ] = current_signature
-
-                        await send_to_group(
-                            bot,
-                            format_threats(
-                                city,
+                        threats_signature = (
+                            normalize_threats_data(
                                 city_threats
                             )
                         )
 
-                        print(
-                            f"🛰 Початкові загрози "
-                            f"відправлено: {city} | "
-                            f"кількість={len(city_threats)}"
+                        previous_threats = (
+                            state["threats"]
                         )
 
-                        continue
+                        # ---------------------------------------------
+                        # ПЕРШИЙ ЗАПУСК
+                        # ---------------------------------------------
 
-                    # =================================================
-                    # ЗАГРОЗИ ЗМІНИЛИСЯ
-                    # =================================================
+                        if previous_threats is None:
 
-                    if (
-                        current_signature
-                        != previous_signature
-                    ):
-
-                        # =================================================
-                        # ВСІ ЗАГРОЗИ ЗНИКЛИ
-                        #
-                        # АЛЕ ТРИВОГА ЩЕ АКТИВНА.
-                        # ТОМУ ПИШЕМО САМЕ:
-                        # "ЗАГРОЗ ПОБЛИЗУ НЕМАЄ — КИЇВ"
-                        #
-                        # Це НЕ є відбоєм.
-                        # Відбій надсилається окремо
-                        # тільки після зміни статусу тривоги.
-                        # =================================================
-
-                        if (
-                            previous_signature
-                            and not current_signature
-                        ):
-
-                            text = (
-                                f"🟢 <b>ЗАГРОЗ ПОБЛИЗУ НЕМАЄ — "
-                                f"{city.upper()}</b>\n\n"
-                                f"📍 <b>{city}</b>\n\n"
-                                "✅ Активних загроз не виявлено.\n\n"
-                                "🚨 Повітряна тривога "
-                                "ще триває."
-                            )
-
-                            await send_to_group(
-                                bot,
-                                text
+                            state["threats"] = (
+                                threats_signature
                             )
 
                             print(
-                                f"🟢 Загрози зникли, "
-                                f"але тривога ще активна: "
-                                f"{city}"
+                                f"📡 Початковий стан загроз: "
+                                f"{city} | "
+                                f"{len(city_threats)}"
                             )
 
-                        # =================================================
-                        # З'ЯВИЛИСЯ ЗАГРОЗИ
-                        # =================================================
+                        # ---------------------------------------------
+                        # ЗАГРОЗИ ЗМІНИЛИСЯ
+                        # ---------------------------------------------
 
                         elif (
-                            not previous_signature
-                            and current_signature
+                            threats_signature
+                            != previous_threats
                         ):
 
-                            text = (
-                                "🛰 <b>ЗАГРОЗИ З'ЯВИЛИСЯ</b>\n\n"
-                                f"{format_threats(city, city_threats)}"
+                            text = format_threats(
+                                city,
+                                city_threats
                             )
 
                             await send_to_group(
@@ -831,35 +849,22 @@ async def group_alert_monitor(bot: Bot):
                                 text
                             )
 
-                            print(
-                                f"🛰 Нові загрози: "
-                                f"{city}"
-                            )
-
-                        # =================================================
-                        # ЗМІНИВСЯ СПИСОК ЗАГРОЗ
-                        # =================================================
-
-                        else:
-
-                            text = (
-                                "🛰 <b>ОНОВЛЕННЯ ЗАГРОЗ</b>\n\n"
-                                f"{format_threats(city, city_threats)}"
-                            )
-
-                            await send_to_group(
-                                bot,
-                                text
+                            state["threats"] = (
+                                threats_signature
                             )
 
                             print(
                                 f"🔄 Загрози змінилися: "
-                                f"{city}"
+                                f"{city} | "
+                                f"{len(city_threats)}"
                             )
 
-                        _last_threat_states[
-                            city
-                        ] = current_signature
+                except Exception as city_error:
+
+                    print(
+                        f"❌ Помилка моніторингу "
+                        f"{city}: {city_error}"
+                    )
 
         except Exception as e:
 
@@ -867,23 +872,23 @@ async def group_alert_monitor(bot: Bot):
                 f"❌ Помилка моніторингу: {e}"
             )
 
-        # =================================================
-        # ЧЕКАЄМО 10 СЕКУНД
-        # =================================================
+        # =====================================================
+        # НАСТУПНА ПЕРЕВІРКА
+        # =====================================================
 
         await asyncio.sleep(
-            CHECK_INTERVAL
+            MONITOR_INTERVAL
         )
 
 
-# =====================================================
+# ============================================================
 # РАНКОВА ПОГОДА
-# =====================================================
+# ============================================================
 
 async def send_morning_weather(bot: Bot):
 
     """
-    Відправляє ранкову погоду
+    Відправляє погоду в групу
     щодня о 08:00 за Києвом.
     """
 
@@ -901,6 +906,7 @@ async def send_morning_weather(bot: Bot):
 
             await send_to_group(
                 bot,
+
                 "❌ Не вдалося отримати "
                 "ранкову погоду для Києва."
             )
@@ -957,20 +963,19 @@ async def send_morning_weather(bot: Bot):
         )
 
 
-# =====================================================
+# ============================================================
 # ПЛАНУВАЛЬНИК РАНКОВОЇ ПОГОДИ
-# =====================================================
+# ============================================================
 
 async def morning_weather_scheduler(bot: Bot):
 
     """
-    Запускає ранкову погоду
-    щодня о 08:00 за Києвом.
+    Запускає ранкову погоду щодня
+    о 08:00 за Києвом.
     """
 
     print(
-        "🌅 Планувальник ранкової "
-        "погоди запущений"
+        "🌅 Планувальник ранкової погоди запущений"
     )
 
     while True:
@@ -997,10 +1002,8 @@ async def morning_weather_scheduler(bot: Bot):
         ).total_seconds()
 
         print(
-            "⏰ Наступна погода: "
-            + next_run.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            f"⏰ Наступна погода: "
+            f"{next_run.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
         await asyncio.sleep(
