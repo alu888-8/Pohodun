@@ -6,67 +6,177 @@ from app.data.regions import CITY_REGIONS
 
 from app.services.threats import get_threats
 
+
 router = Router()
 
 
-@router.message(lambda message: message.text == "🛰 Загрози")
+@router.message(
+    lambda message: message.text == "🛰 Загрози"
+)
 async def threats(message: Message):
 
-    city = get_city(message.from_user.id)
-
-    keywords = CITY_REGIONS.get(city, [city.lower()])
+    city = get_city(
+        message.from_user.id
+    )
 
     data = get_threats()
 
     if data is None:
-        await message.answer("❌ Не вдалося отримати список загроз.")
+
+        await message.answer(
+            "❌ Не вдалося отримати список загроз."
+        )
+
         return
 
-    threats = data.get("threats", [])
+    all_threats = data.get(
+        "threats",
+        []
+    )
+
+    # Беремо тільки активні загрози
+    active_threats = []
+
+    for threat in all_threats:
+
+        status = threat.get(
+            "status",
+            "active"
+        )
+
+        if status in (
+            "active",
+            "stale"
+        ):
+
+            active_threats.append(
+                threat
+            )
+
+    # ==========================================
+    # ПОШУК ЗАГРОЗ ДЛЯ МІСТА
+    # ==========================================
+
+    keywords = CITY_REGIONS.get(
+        city,
+        [city.lower()]
+    )
 
     result = []
 
-    for t in threats:
+    for threat in active_threats:
 
-        search_text = (
-            f"{t.get('region', '')} "
-            f"{t.get('district', '')} "
-            f"{t.get('locality', '')} "
-            f"{t.get('title', '')} "
-            f"{t.get('explanationShort', '')}"
+        region = str(
+            threat.get("region", "")
         ).lower()
 
-        if any(word in search_text for word in keywords):
+        district = str(
+            threat.get("district", "")
+        ).lower()
 
-            icon = {
-                "uav": "🛸",
-                "missile": "🚀",
-                "ballistic": "💥",
-                "kab": "💣",
-                "mig31k": "✈️",
-                "recon": "👀",
-                "unknown": "❓"
-            }.get(t.get("type"), "❓")
+        locality = str(
+            threat.get("locality", "")
+        ).lower()
 
-            result.append(
-                f"{icon} <b>{t.get('title')}</b>\n"
-                f"📍 {t.get('region')}\n"
-                f"{t.get('explanationShort')}"
+        title = str(
+            threat.get("title", "")
+        )
+
+        explanation = str(
+            threat.get(
+                "explanationShort",
+                ""
             )
+        )
+
+        search_text = (
+            f"{region} "
+            f"{district} "
+            f"{locality} "
+            f"{title} "
+            f"{explanation}"
+        ).lower()
+
+        matched = any(
+            keyword.lower() in search_text
+            for keyword in keywords
+        )
+
+        if not matched:
+            continue
+
+        threat_type = threat.get(
+            "type",
+            "unknown"
+        )
+
+        icon = {
+            "uav": "🛸",
+            "missile": "🚀",
+            "ballistic": "💥",
+            "kab": "💣",
+            "mig31k": "✈️",
+            "recon": "👀",
+            "unknown": "❓"
+        }.get(
+            threat_type,
+            "❓"
+        )
+
+        threat_title = threat.get(
+            "title",
+            "Невідома загроза"
+        )
+
+        threat_region = threat.get(
+            "region",
+            ""
+        )
+
+        explanation_short = threat.get(
+            "explanationShort",
+            ""
+        )
+
+        text = (
+            f"{icon} <b>{threat_title}</b>\n"
+            f"📍 {threat_region}"
+        )
+
+        if explanation_short:
+
+            text += (
+                f"\n"
+                f"ℹ️ {explanation_short}"
+            )
+
+        result.append(
+            text
+        )
+
+    # ==========================================
+    # РЕЗУЛЬТАТ
+    # ==========================================
 
     if not result:
 
         await message.answer(
             f"🛰 <b>Загрози</b>\n\n"
             f"📍 <b>{city}</b>\n\n"
-            "🟢 Поблизу активних загроз немає.",
+            "🟢 Поблизу активних загроз "
+            "не виявлено.",
             parse_mode="HTML"
         )
+
         return
 
     text = (
-        f"🛰 <b>Загрози для {city}</b>\n\n"
+        f"🛰 <b>Активні загрози</b>\n\n"
+        f"📍 <b>{city}</b>\n\n"
         + "\n\n".join(result)
     )
 
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(
+        text,
+        parse_mode="HTML"
+    )
