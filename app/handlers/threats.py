@@ -1,7 +1,11 @@
+import math
+import asyncio
+
 from aiogram import Router
 from aiogram.types import Message
 
 from app.database.db import get_city
+from app.data.cities import CITY_API
 from app.data.regions import CITY_REGIONS
 
 from app.services.threats import get_threats
@@ -10,173 +14,454 @@ from app.services.threats import get_threats
 router = Router()
 
 
-@router.message(
-    lambda message: message.text == "🛰 Загрози"
-)
-async def threats(message: Message):
+# =====================================================
+# РАДІУС ПОШУКУ ЗАГРОЗ
+# =====================================================
 
-    city = get_city(
-        message.from_user.id
+THREAT_RADIUS_KM = 70
+
+
+# =====================================================
+# ВІДСТАНЬ МІЖ ДВОМА КООРДИНАТАМИ
+# =====================================================
+
+def distance_km(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+):
+
+    try:
+
+        lat1 = float(lat1)
+        lon1 = float(lon1)
+        lat2 = float(lat2)
+        lon2 = float(lon2)
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return None
+
+    earth_radius = 6371
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+
+    delta_lat = math.radians(
+        lat2 - lat1
     )
 
-    data = get_threats()
+    delta_lon = math.radians(
+        lon2 - lon1
+    )
 
-    if data is None:
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        +
+        math.cos(lat1_rad)
+        *
+        math.cos(lat2_rad)
+        *
+        math.sin(delta_lon / 2) ** 2
+    )
 
-        await message.answer(
-            "❌ Не вдалося отримати список загроз."
+    c = (
+        2
+        *
+        math.atan2(
+            math.sqrt(a),
+            math.sqrt(1 - a)
+        )
+    )
+
+    return earth_radius * c
+
+
+# =====================================================
+# КООРДИНАТИ МІСТА
+# =====================================================
+
+def get_city_coordinates(city):
+
+    coordinates = CITY_API.get(
+        city
+    )
+
+    if not coordinates:
+
+        return None
+
+    try:
+
+        lat, lon = coordinates.split(",")
+
+        return (
+            float(lat.strip()),
+            float(lon.strip())
         )
 
-        return
+    except Exception as e:
 
-    all_threats = data.get(
-        "threats",
-        []
-    )
+        print(
+            f"❌ Помилка координат міста "
+            f"{city}: {e}"
+        )
 
-    # Беремо тільки активні загрози
-    active_threats = []
+        return None
 
-    for threat in all_threats:
 
-        status = threat.get(
+# =====================================================
+# ПЕРЕВІРКА ЧИ ЗАГРОЗА ПОБЛИЗУ МІСТА
+# =====================================================
+
+def is_threat_near_city(
+    threat,
+    city
+):
+
+    # -------------------------------------------------
+    # ВАЖЛИВО:
+    # беремо тільки активні загрози
+    # -------------------------------------------------
+
+    status = (
+        threat.get(
             "status",
             "active"
         )
+        or "active"
+    ).lower()
 
-        if status in (
-            "active",
-            "stale"
-        ):
+    if status not in (
+        "active",
+        "stale"
+    ):
 
-            active_threats.append(
-                threat
+        return False
+
+    # -------------------------------------------------
+    # КООРДИНАТИ МІСТА
+    # -------------------------------------------------
+
+    city_coordinates = (
+        get_city_coordinates(city)
+    )
+
+    # -------------------------------------------------
+    # КООРДИНАТИ ЗАГРОЗИ
+    # -------------------------------------------------
+
+    threat_lat = threat.get(
+        "lat"
+    )
+
+    threat_lon = threat.get(
+        "lon"
+    )
+
+    # -------------------------------------------------
+    # ОСНОВНИЙ СПОСІБ:
+    # відстань по координатах
+    # -------------------------------------------------
+
+    if (
+        city_coordinates
+        and threat_lat is not None
+        and threat_lon is not None
+    ):
+
+        city_lat, city_lon = (
+            city_coordinates
+        )
+
+        distance = distance_km(
+            city_lat,
+            city_lon,
+            threat_lat,
+            threat_lon
+        )
+
+        if distance is not None:
+
+            print(
+                f"📡 Загроза | "
+                f"{city} | "
+                f"{threat.get('title')} | "
+                f"{distance:.1f} км"
             )
 
-    # ==========================================
-    # ПОШУК ЗАГРОЗ ДЛЯ МІСТА
-    # ==========================================
+            if (
+                distance
+                <= THREAT_RADIUS_KM
+            ):
+
+                return True
+
+    # -------------------------------------------------
+    # ЗАПАСНИЙ ВАРІАНТ:
+    # перевіряємо текст
+    # -------------------------------------------------
 
     keywords = CITY_REGIONS.get(
         city,
         [city.lower()]
     )
 
-    result = []
+    search_text = (
+        f"{threat.get('region', '')} "
+        f"{threat.get('district', '')} "
+        f"{threat.get('locality', '')} "
+        f"{threat.get('title', '')} "
+        f"{threat.get('explanationShort', '')}"
+    ).lower()
 
-    for threat in active_threats:
+    for keyword in keywords:
 
-        region = str(
-            threat.get("region", "")
-        ).lower()
+        if keyword.lower() in search_text:
 
-        district = str(
-            threat.get("district", "")
-        ).lower()
+            return True
 
-        locality = str(
-            threat.get("locality", "")
-        ).lower()
+    return False
 
-        title = str(
-            threat.get("title", "")
+
+# =====================================================
+# ІКОНКА ЗАГРОЗИ
+# =====================================================
+
+def get_threat_icon(
+    threat_type
+):
+
+    return {
+        "uav": "🛸",
+        "missile": "🚀",
+        "ballistic": "💥",
+        "kab": "💣",
+        "mig31k": "✈️",
+        "recon": "👀",
+        "unknown": "❓"
+    }.get(
+        threat_type,
+        "❓"
+    )
+
+
+# =====================================================
+# ФОРМУВАННЯ ЗАГРОЗИ
+# =====================================================
+
+def format_threat(
+    threat
+):
+
+    icon = get_threat_icon(
+        threat.get("type")
+    )
+
+    title = threat.get(
+        "title",
+        "Невідома загроза"
+    )
+
+    region = threat.get(
+        "region",
+        ""
+    )
+
+    district = threat.get(
+        "district",
+        ""
+    )
+
+    locality = threat.get(
+        "locality",
+        ""
+    )
+
+    explanation = threat.get(
+        "explanationShort",
+        ""
+    )
+
+    count = threat.get(
+        "count"
+    )
+
+    source_count = threat.get(
+        "sourceCount"
+    )
+
+    text = (
+        f"{icon} <b>{title}</b>\n"
+    )
+
+    if region:
+
+        text += (
+            f"📍 {region}\n"
         )
 
-        explanation = str(
-            threat.get(
-                "explanationShort",
-                ""
-            )
+    if district:
+
+        text += (
+            f"🏙 {district}\n"
         )
 
-        search_text = (
-            f"{region} "
-            f"{district} "
-            f"{locality} "
-            f"{title} "
-            f"{explanation}"
-        ).lower()
+    if locality:
 
-        matched = any(
-            keyword.lower() in search_text
-            for keyword in keywords
+        text += (
+            f"📌 {locality}\n"
         )
 
-        if not matched:
-            continue
+    if explanation:
 
-        threat_type = threat.get(
-            "type",
-            "unknown"
+        text += (
+            f"{explanation}\n"
         )
 
-        icon = {
-            "uav": "🛸",
-            "missile": "🚀",
-            "ballistic": "💥",
-            "kab": "💣",
-            "mig31k": "✈️",
-            "recon": "👀",
-            "unknown": "❓"
-        }.get(
-            threat_type,
-            "❓"
+    if count and count > 1:
+
+        text += (
+            f"🎯 Група: {count}\n"
         )
 
-        threat_title = threat.get(
-            "title",
-            "Невідома загроза"
+    if source_count:
+
+        text += (
+            f"🔎 Підтверджень: "
+            f"{source_count}"
         )
 
-        threat_region = threat.get(
-            "region",
-            ""
-        )
+    return text
 
-        explanation_short = threat.get(
-            "explanationShort",
-            ""
-        )
 
-        text = (
-            f"{icon} <b>{threat_title}</b>\n"
-            f"📍 {threat_region}"
-        )
+# =====================================================
+# КНОПКА ЗАГРОЗ
+# =====================================================
 
-        if explanation_short:
+@router.message(
+    lambda message:
+    message.text == "🛰 Загрози"
+)
+async def threats(
+    message: Message
+):
 
-            text += (
-                f"\n"
-                f"ℹ️ {explanation_short}"
-            )
+    user_id = (
+        message.from_user.id
+    )
 
-        result.append(
-            text
-        )
+    # -------------------------------------------------
+    # МІСТО
+    # -------------------------------------------------
 
-    # ==========================================
-    # РЕЗУЛЬТАТ
-    # ==========================================
+    city = get_city(
+        user_id
+    )
 
-    if not result:
+    print(
+        f"🛰 THREATS | "
+        f"user_id={user_id} | "
+        f"city={city}"
+    )
+
+    if not city:
 
         await message.answer(
-            f"🛰 <b>Загрози</b>\n\n"
-            f"📍 <b>{city}</b>\n\n"
-            "🟢 Поблизу активних загроз "
-            "не виявлено.",
-            parse_mode="HTML"
+            "❌ Спочатку оберіть місто."
         )
 
         return
 
-    text = (
-        f"🛰 <b>Активні загрози</b>\n\n"
-        f"📍 <b>{city}</b>\n\n"
-        + "\n\n".join(result)
+    # -------------------------------------------------
+    # API
+    # -------------------------------------------------
+
+    data = await asyncio.to_thread(
+        get_threats
     )
+
+    if data is None:
+
+        await message.answer(
+            "❌ Не вдалося отримати "
+            "актуальні дані про загрози."
+        )
+
+        return
+
+    threats_data = data.get(
+        "threats",
+        []
+    )
+
+    print(
+        f"🛰 THREATS | "
+        f"API threats={len(threats_data)}"
+    )
+
+    # -------------------------------------------------
+    # ФІЛЬТРУЄМО
+    # -------------------------------------------------
+
+    result = []
+
+    for threat in threats_data:
+
+        if is_threat_near_city(
+            threat,
+            city
+        ):
+
+            result.append(
+                format_threat(
+                    threat
+                )
+            )
+
+    # -------------------------------------------------
+    # Є ЗАГРОЗИ
+    # -------------------------------------------------
+
+    if result:
+
+        text = (
+            f"🛰 <b>ЗАГРОЗИ ДЛЯ "
+            f"{city.upper()}</b>\n\n"
+            +
+            "\n\n".join(
+                result
+            )
+        )
+
+    # -------------------------------------------------
+    # НЕМАЄ ЗАГРОЗ
+    # -------------------------------------------------
+
+    else:
+
+        text = (
+            f"🛰 <b>Загрози</b>\n\n"
+            f"📍 <b>{city}</b>\n\n"
+            "🟢 <b>Поблизу активних "
+            "загроз не виявлено.</b>"
+        )
+
+    # -------------------------------------------------
+    # ВІДПОВІДЬ
+    # -------------------------------------------------
 
     await message.answer(
         text,
         parse_mode="HTML"
+    )
+
+    print(
+        f"✅ THREATS | "
+        f"city={city} | "
+        f"found={len(result)}"
     )
