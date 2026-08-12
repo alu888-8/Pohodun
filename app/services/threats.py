@@ -1,6 +1,5 @@
 import requests
 
-
 URL = "https://neptun.in.ua/api/v1/threats"
 
 
@@ -10,18 +9,18 @@ def get_threats():
 
         response = requests.get(
             URL,
-            timeout=10
+            timeout=(3, 7)
         )
 
         print(
-            "THREATS STATUS:",
+            "🛰 Threats API status:",
             response.status_code
         )
 
         if response.status_code != 200:
 
             print(
-                "THREATS ERROR:",
+                "❌ Threats API error:",
                 response.text
             )
 
@@ -29,23 +28,30 @@ def get_threats():
 
         data = response.json()
 
+        threats = data.get(
+            "threats",
+            []
+        )
+
         print(
-            "THREATS COUNT:",
-            len(
-                data.get(
-                    "threats",
-                    []
-                )
-            )
+            "🛰 Threats count:",
+            len(threats)
         )
 
         return data
 
+    except requests.Timeout:
+
+        print(
+            "⏱️ Threats API: timeout"
+        )
+
+        return None
+
     except Exception as e:
 
         print(
-            "❌ Помилка отримання загроз:",
-            e
+            f"❌ Помилка отримання загроз: {e}"
         )
 
         return None
