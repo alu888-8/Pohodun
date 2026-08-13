@@ -22,6 +22,9 @@ def get_main_menu(user_id: int):
         ],
         [
             KeyboardButton(text="👕 Поради"),
+            KeyboardButton(text="📅 Цей день"),
+        ],
+        [
             KeyboardButton(text="⚙️ Налаштування"),
         ],
     ]
