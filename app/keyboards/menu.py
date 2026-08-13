@@ -21,8 +21,7 @@ def get_main_menu(user_id: int):
             KeyboardButton(text="🌫 Якість повітря"),
         ],
         [
-            KeyboardButton(text="👕 Поради"),
-            KeyboardButton(text="📅 Цей день"),
+            KeyboardButton(text="👕 Актуально"),
         ],
         [
             KeyboardButton(text="⚙️ Налаштування"),

@@ -11,9 +11,10 @@ router = Router()
 
 
 @router.message(
-    lambda message: message.text == "📅 Цей день"
+    lambda message: message.text == "👕 Актуально"
 )
 async def day_facts(message: Message):
+
     user_id = message.from_user.id
 
     city = get_city(user_id)

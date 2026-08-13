@@ -1,37 +1,90 @@
-import calendar
-from datetime import date
+import random
+from datetime import datetime
 from functools import lru_cache
+from html import escape
+from zoneinfo import ZoneInfo
 
 import requests
 
 from app.data.cities import CITY_API
+from app.services.weather import get_weather
 
 
-WIKIMEDIA_URL = "https://uk.wikipedia.org/api/rest_v1/feed/onthisday"
-OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
+WIKIMEDIA_URL = (
+    "https://uk.wikipedia.org/api/rest_v1/feed/onthisday"
+)
+
+OPEN_METEO_URL = (
+    "https://archive-api.open-meteo.com/v1/archive"
+)
+
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
 MONTHS_UA = {
-    1: "січня", 2: "лютого", 3: "березня",
-    4: "квітня", 5: "травня", 6: "червня",
-    7: "липня", 8: "серпня", 9: "вересня",
-    10: "жовтня", 11: "листопада", 12: "грудня",
+    1: "січня",
+    2: "лютого",
+    3: "березня",
+    4: "квітня",
+    5: "травня",
+    6: "червня",
+    7: "липня",
+    8: "серпня",
+    9: "вересня",
+    10: "жовтня",
+    11: "листопада",
+    12: "грудня",
 }
 
 
+# =====================================================
+# КООРДИНАТИ МІСТА
+# =====================================================
+
 def _city_coordinates(city):
+
     value = CITY_API.get(city)
+
+    if not value and city == "Київ":
+        value = CITY_API.get("Kyiv")
+
+    if not value and city:
+
+        city_lower = city.strip().lower()
+
+        for key, coordinates in CITY_API.items():
+
+            if str(key).strip().lower() == city_lower:
+
+                value = coordinates
+                break
+
     if not value:
         return None
 
     try:
+
         lat, lon = value.split(",")
-        return float(lat.strip()), float(lon.strip())
-    except (ValueError, AttributeError):
+
+        return (
+            float(lat.strip()),
+            float(lon.strip())
+        )
+
+    except (
+        ValueError,
+        AttributeError
+    ):
+
         return None
 
 
+# =====================================================
+# ОЧИЩЕННЯ ТЕКСТУ
+# =====================================================
+
 def _clean_text(value):
+
     if not value:
         return ""
 
@@ -42,21 +95,32 @@ def _clean_text(value):
     )
 
 
+# =====================================================
+# WIKIMEDIA
+# =====================================================
+
 @lru_cache(maxsize=128)
 def _get_wikimedia(month, day):
-    """
-    Wikimedia On This Day:
-    births/events for the selected day.
-    """
+
     result = {
         "births": [],
         "events": [],
     }
 
-    for kind in ("births", "events"):
-        url = f"{WIKIMEDIA_URL}/{kind}/{month:02d}/{day:02d}"
+    for kind in (
+        "births",
+        "events",
+    ):
+
+        url = (
+            f"{WIKIMEDIA_URL}/"
+            f"{kind}/"
+            f"{month:02d}/"
+            f"{day:02d}"
+        )
 
         try:
+
             response = requests.get(
                 url,
                 headers={
@@ -66,17 +130,23 @@ def _get_wikimedia(month, day):
             )
 
             if response.status_code != 200:
+
                 print(
                     f"⚠️ Wikimedia {kind}: "
                     f"HTTP {response.status_code}"
                 )
+
                 continue
 
             data = response.json()
 
-            result[kind] = data.get(kind, [])
+            result[kind] = data.get(
+                kind,
+                []
+            )
 
         except Exception as e:
+
             print(
                 f"⚠️ Wikimedia {kind} error: {e}"
             )
@@ -84,27 +154,47 @@ def _get_wikimedia(month, day):
     return result
 
 
+# =====================================================
+# ІСТОРИЧНА ПОГОДА
+# =====================================================
+
 @lru_cache(maxsize=128)
-def _get_weather_records(lat, lon, year_from, year_to, month, day):
-    """
-    Історичні добові максимуми/мінімуми.
-    Open-Meteo Archive базується на історичних
-    реаналізах, тому в повідомленні прямо вказуємо джерело.
-    """
-    start = f"{year_from:04d}-{month:02d}-{day:02d}"
-    end = f"{year_to:04d}-{month:02d}-{day:02d}"
+def _get_weather_records(
+    lat,
+    lon,
+    year_from,
+    year_to,
+    month,
+    day
+):
+
+    start = (
+        f"{year_from:04d}-"
+        f"{month:02d}-"
+        f"{day:02d}"
+    )
+
+    end = (
+        f"{year_to:04d}-"
+        f"{month:02d}-"
+        f"{day:02d}"
+    )
 
     params = {
         "latitude": lat,
         "longitude": lon,
         "start_date": start,
         "end_date": end,
-        "daily": "temperature_2m_max,temperature_2m_min",
+        "daily": (
+            "temperature_2m_max,"
+            "temperature_2m_min"
+        ),
         "temperature_unit": "celsius",
         "timezone": "auto",
     }
 
     try:
+
         response = requests.get(
             OPEN_METEO_URL,
             params=params,
@@ -112,96 +202,174 @@ def _get_weather_records(lat, lon, year_from, year_to, month, day):
         )
 
         if response.status_code != 200:
+
             print(
                 f"⚠️ Open-Meteo: "
                 f"HTTP {response.status_code}"
             )
+
             return None
 
         data = response.json()
-        daily = data.get("daily", {})
 
-        dates = daily.get("time", [])
-        highs = daily.get("temperature_2m_max", [])
-        lows = daily.get("temperature_2m_min", [])
+        daily = data.get(
+            "daily",
+            {}
+        )
+
+        dates = daily.get(
+            "time",
+            []
+        )
+
+        highs = daily.get(
+            "temperature_2m_max",
+            []
+        )
+
+        lows = daily.get(
+            "temperature_2m_min",
+            []
+        )
 
         values = []
 
         for dt, high, low in zip(
             dates,
             highs,
-            lows,
+            lows
         ):
+
             if not dt:
                 continue
 
-            # Запит іде на один і той самий місяць/день
-            # у кожному році, тому достатньо перевірити дату.
-            if (
-                len(dt) >= 10
-                and int(dt[5:7]) == month
-                and int(dt[8:10]) == day
-            ):
-                if high is not None:
-                    values.append(
-                        {
-                            "date": dt,
-                            "type": "high",
-                            "value": float(high),
-                        }
-                    )
+            try:
 
-                if low is not None:
-                    values.append(
-                        {
-                            "date": dt,
-                            "type": "low",
-                            "value": float(low),
-                        }
-                    )
+                if (
+                    len(dt) >= 10
+                    and int(dt[5:7]) == month
+                    and int(dt[8:10]) == day
+                ):
+
+                    if high is not None:
+
+                        values.append(
+                            {
+                                "date": dt,
+                                "type": "high",
+                                "value": float(high),
+                            }
+                        )
+
+                    if low is not None:
+
+                        values.append(
+                            {
+                                "date": dt,
+                                "type": "low",
+                                "value": float(low),
+                            }
+                        )
+
+            except (
+                ValueError,
+                TypeError
+            ):
+
+                continue
 
         return values
 
     except Exception as e:
+
         print(
             f"⚠️ Open-Meteo error: {e}"
         )
+
         return None
 
 
-def _format_people(items, limit=4):
+# =====================================================
+# 🎂 НАРОДЖЕНІ
+# =====================================================
+
+def _format_people(
+    items,
+    limit=4
+):
+
     result = []
 
     for item in items:
-        year = item.get("year")
-        text = item.get("text", "")
-        pages = item.get("pages") or []
+
+        year = item.get(
+            "year"
+        )
+
+        text = item.get(
+            "text",
+            ""
+        )
+
+        pages = (
+            item.get("pages")
+            or []
+        )
 
         title = ""
 
         if pages:
+
             title = (
-                pages[0].get("normalizedtitle")
-                or pages[0].get("title")
-                or ""
+                pages[0].get(
+                    "normalizedtitle"
+                )
+                or
+                pages[0].get(
+                    "title"
+                )
+                or
+                ""
             )
 
-        title = _clean_text(title)
+        title = _clean_text(
+            title
+        )
 
-        if not title:
-            # Wikimedia інколи віддає текст без title.
-            text_clean = _clean_text(text)
-            if text_clean:
-                result.append(
-                    f"• {text_clean[:180]}"
-                )
+        if title.isdigit():
             continue
 
-        if year:
-            result.append(
-                f"• <b>{title}</b> — {year} р."
+        if not title:
+
+            text_clean = _clean_text(
+                text
             )
+
+            if text_clean:
+
+                result.append(
+                    f"• {escape(text_clean[:180], quote=False)}"
+                )
+
+            if len(result) >= limit:
+                break
+
+            continue
+
+        title = escape(
+            title,
+            quote=False
+        )
+
+        if year:
+
+            result.append(
+                f"• <b>{title}</b> — "
+                f"{year} р."
+            )
+
         else:
+
             result.append(
                 f"• <b>{title}</b>"
             )
@@ -212,49 +380,569 @@ def _format_people(items, limit=4):
     return result
 
 
-def _format_events(items, limit=3):
-    result = []
+# =====================================================
+# 🇺🇦 КЛЮЧОВІ СЛОВА УКРАЇНИ
+# =====================================================
+
+UKRAINE_KEYWORDS = (
+
+    "україн",
+    "україна",
+    "київ",
+    "київськ",
+    "львів",
+    "львівськ",
+    "харків",
+    "харківськ",
+    "одес",
+    "одеськ",
+    "дніпро",
+    "дніпропетров",
+    "запоріж",
+    "черніг",
+    "черкас",
+    "полтав",
+    "волин",
+    "поділ",
+    "поділь",
+    "галичин",
+    "буковин",
+    "закарпат",
+    "донбас",
+    "донец",
+    "луган",
+    "крим",
+    "херсон",
+    "миколаїв",
+    "житомир",
+    "рівн",
+    "терноп",
+    "хмельниць",
+    "івано-франків",
+    "вінниц",
+    "сум",
+    "чернів",
+    "майдан",
+    "козац",
+    "запороз",
+    "гетьман",
+    "гетьманщин",
+    "українська народна республіка",
+    "зунр",
+    "упа",
+    "оун",
+    "українська повстанська армія",
+    "незалежність україни",
+    "державність україни",
+    "атo",
+    "ато",
+    "зсу",
+    "збройні сили україни",
+)
+
+
+# =====================================================
+# 🇷🇺 РОСІЙСЬКІ / РАДЯНСЬКІ КЛЮЧОВІ СЛОВА
+# =====================================================
+
+RUSSIA_KEYWORDS = (
+
+    "росі",
+    "російськ",
+    "росія",
+    "москва",
+    "москов",
+    "санкт-петербург",
+    "ленінград",
+    "срср",
+    "радянськ",
+    "совєтськ",
+    "більшовик",
+    "більшовиць",
+    "кремл",
+    "російська імперія",
+    "російської імперії",
+    "російсько-імпер",
+    "рсфрр",
+    "кгб",
+    "нквс",
+    "червона армія",
+)
+
+
+# =====================================================
+# ТЕКСТ ПОДІЇ
+# =====================================================
+
+def _event_text(item):
+
+    year = item.get(
+        "year"
+    )
+
+    text = _clean_text(
+        item.get(
+            "text",
+            ""
+        )
+    )
+
+    pages = (
+        item.get("pages")
+        or []
+    )
+
+    page_titles = []
+
+    for page in pages:
+
+        title = (
+            page.get(
+                "normalizedtitle"
+            )
+            or
+            page.get(
+                "title"
+            )
+            or
+            ""
+        )
+
+        if title:
+
+            page_titles.append(
+                _clean_text(title)
+            )
+
+    return _clean_text(
+        f"{year or ''} "
+        f"{text} "
+        f"{' '.join(page_titles)}"
+    )
+
+
+# =====================================================
+# ПЕРЕВІРКА УКРАЇНСЬКОЇ ПОДІЇ
+# =====================================================
+
+def _is_ukraine_event(item):
+
+    text = _event_text(
+        item
+    ).lower()
+
+    return any(
+        keyword in text
+        for keyword in UKRAINE_KEYWORDS
+    )
+
+
+# =====================================================
+# ПЕРЕВІРКА РОСІЙСЬКОЇ ПОДІЇ
+# =====================================================
+
+def _is_russia_event(item):
+
+    text = _event_text(
+        item
+    ).lower()
+
+    return any(
+        keyword in text
+        for keyword in RUSSIA_KEYWORDS
+    )
+
+
+# =====================================================
+# 📜 ФОРМУВАННЯ ПОДІЙ
+# =====================================================
+
+def _format_events(
+    items,
+    limit=3
+):
+
+    # -----------------------------------------------
+    # Спочатку шукаємо українські події
+    # -----------------------------------------------
+
+    ukrainian_events = []
+
+    # -----------------------------------------------
+    # Потім нейтральні світові
+    # -----------------------------------------------
+
+    world_events = []
 
     for item in items:
-        year = item.get("year")
+
         text = _clean_text(
-            item.get("text", "")
+            item.get(
+                "text",
+                ""
+            )
         )
 
         if not text:
             continue
 
-        if year:
-            result.append(
-                f"• <b>{year}</b> — {text[:220]}"
-            )
-        else:
-            result.append(
-                f"• {text[:220]}"
+        # Російські / радянські події
+        # взагалі не показуємо.
+        if _is_russia_event(item):
+
+            print(
+                "🚫 DAY FACTS | "
+                "Російську/радянську "
+                f"подію відфільтровано: {text[:120]}"
             )
 
-        if len(result) >= limit:
+            continue
+
+        if _is_ukraine_event(item):
+
+            ukrainian_events.append(
+                item
+            )
+
+        else:
+
+            world_events.append(
+                item
+            )
+
+    # -----------------------------------------------
+    # Українські події мають пріоритет
+    # -----------------------------------------------
+
+    selected = []
+
+    for item in ukrainian_events:
+
+        selected.append(
+            item
+        )
+
+        if len(selected) >= limit:
             break
+
+    # -----------------------------------------------
+    # Якщо українських мало —
+    # додаємо нейтральні світові.
+    # -----------------------------------------------
+
+    if len(selected) < limit:
+
+        for item in world_events:
+
+            if item in selected:
+                continue
+
+            selected.append(
+                item
+            )
+
+            if len(selected) >= limit:
+                break
+
+    # -----------------------------------------------
+    # Формуємо текст
+    # -----------------------------------------------
+
+    result = []
+
+    for item in selected:
+
+        year = item.get(
+            "year"
+        )
+
+        text = _clean_text(
+            item.get(
+                "text",
+                ""
+            )
+        )
+
+        if not text:
+            continue
+
+        text = escape(
+            text[:220],
+            quote=False
+        )
+
+        if year:
+
+            result.append(
+                f"• <b>{year}</b> — "
+                f"{text}"
+            )
+
+        else:
+
+            result.append(
+                f"• {text}"
+            )
 
     return result
 
 
+# =====================================================
+# 😄 АНЕКДОТИ
+# =====================================================
+
+JOKES = [
+
+    (
+        "— Офіціанте, у вас є щось від спеки?\n"
+        "— Так. Рахунок."
+    ),
+
+    (
+        "— Чому ти знову запізнився на роботу?\n"
+        "— Погода була чудова, не хотілося її залишати."
+    ),
+
+    (
+        "Кажуть, понеділок важкий день. "
+        "Але п'ятниця доводить, що тиждень таки можна пережити 😄"
+    ),
+
+    (
+        "— Ти сьогодні рано встав?\n"
+        "— Ні, це я просто ще не ліг."
+    ),
+
+    (
+        "План на сьогодні: зробити все.\n"
+        "Реальність: зробити каву і подумати про все."
+    ),
+
+    (
+        "Синоптики обіцяють мінливу погоду.\n"
+        "А я стабільно не знаю, що вдягнути."
+    ),
+
+    (
+        "Найточніший прогноз погоди — "
+        "подивитися у вікно і все одно взяти куртку."
+    ),
+
+    (
+        "— Як пройшов твій день?\n"
+        "— Як погода: наче нормально, але краще не питати."
+    ),
+
+]
+
+
+# =====================================================
+# ☀️ ПРАКТИЧНІ ПОРАДИ
+# =====================================================
+
+GENERAL_TIPS = [
+
+    "☀️ Якщо сьогодні є можливість — "
+    "знайди хоча б 20 хвилин для прогулянки.",
+
+    "☕ Зроби сьогодні одну нормальну перерву "
+    "без телефону. Кава теж рахується.",
+
+    "🚶 Якщо треба кудись недалеко — "
+    "спробуй пройтися пішки.",
+
+    "💧 Навіть коли не дуже спекотно, "
+    "не забувай пити воду.",
+
+    "😎 Не обов'язково мати великий план на день. "
+    "Іноді достатньо просто зробити одну корисну справу.",
+
+    "🌳 Якщо поруч є парк — "
+    "сьогодні непоганий день, щоб туди заглянути.",
+
+    "🔋 Не забувай заряджати не тільки телефон, "
+    "а й себе — зроби невелику паузу.",
+
+]
+
+
+COLD_TIPS = [
+
+    "🧥 Сьогодні краще взяти додатковий шар одягу.",
+
+    "🧣 Не забудь захистити шию та руки від холоду.",
+
+    "☕ Гарячий напій сьогодні точно не буде зайвим.",
+
+]
+
+
+HOT_TIPS = [
+
+    "💧 Тримай воду поруч, особливо якщо плануєш довго бути надворі.",
+
+    "🧢 У спеку краще не забувати про головний убір.",
+
+    "☀️ Якщо можеш, плануй довгі прогулянки на ранок або вечір.",
+
+]
+
+
+RAIN_TIPS = [
+
+    "☔ Якщо виходиш надовго — захопи парасолю.",
+
+    "👟 Сьогодні краще обрати взуття, яке не боїться води.",
+
+]
+
+
+WIND_TIPS = [
+
+    "💨 Через вітер може відчуватися холодніше, ніж показує термометр.",
+
+    "🧥 Легка вітрозахисна куртка сьогодні буде доречною.",
+
+]
+
+
+# =====================================================
+# ВИБІР ПОРАДИ
+# =====================================================
+
+def _get_practical_tip(city):
+
+    try:
+
+        city_api = CITY_API.get(
+            city,
+            city
+        )
+
+        if city == "Київ":
+
+            city_api = (
+                CITY_API.get("Київ")
+                or
+                CITY_API.get("Kyiv")
+                or
+                city
+            )
+
+        weather = get_weather(
+            city_api
+        )
+
+        if not weather:
+
+            return random.choice(
+                GENERAL_TIPS
+            )
+
+        temp = float(
+            weather.get(
+                "temp",
+                15
+            )
+        )
+
+        feels = float(
+            weather.get(
+                "feels_like",
+                temp
+            )
+        )
+
+        wind = float(
+            weather.get(
+                "wind",
+                0
+            )
+        )
+
+        condition = str(
+            weather.get(
+                "condition",
+                ""
+            )
+        ).lower()
+
+        if (
+            temp >= 28
+            or feels >= 30
+        ):
+
+            return random.choice(
+                HOT_TIPS
+            )
+
+        if (
+            temp <= 5
+            or feels <= 3
+        ):
+
+            return random.choice(
+                COLD_TIPS
+            )
+
+        if any(
+            word in condition
+            for word in (
+                "дощ",
+                "rain",
+                "drizzle",
+                "злива",
+                "мряка"
+            )
+        ):
+
+            return random.choice(
+                RAIN_TIPS
+            )
+
+        if wind >= 7:
+
+            return random.choice(
+                WIND_TIPS
+            )
+
+        return random.choice(
+            GENERAL_TIPS
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Помилка практичної "
+            f"поради: {e}"
+        )
+
+        return random.choice(
+            GENERAL_TIPS
+        )
+
+
+# =====================================================
+# ОСНОВНА ФУНКЦІЯ
+# =====================================================
+
 def get_day_facts(city):
-    """
-    Формує готовий текст для кнопки «📅 Цей день».
-    Працює для міста, яке вже вибрав користувач.
-    """
-    today = date.today()
 
-    month = today.month
-    day = today.day
-    year = today.year
+    now = datetime.now(
+        KYIV_TZ
+    )
 
-    city_data = _city_coordinates(city)
+    month = now.month
+    day = now.day
+    year = now.year
+
+    city_data = _city_coordinates(
+        city
+    )
 
     wiki = _get_wikimedia(
         month,
-        day,
+        day
     )
 
     text = (
@@ -262,120 +950,194 @@ def get_day_facts(city):
         f"{day} {MONTHS_UA[month]}</b>\n\n"
     )
 
-    # =====================================================
-    # НАРОДИЛИСЯ
-    # =====================================================
+    # =================================================
+    # 🎂 НАРОДЖЕНІ
+    # =================================================
 
     births = _format_people(
-        wiki.get("births", []),
-        limit=4,
+        wiki.get(
+            "births",
+            []
+        ),
+        limit=4
     )
 
-    text += "🎂 <b>Хто народився цього дня</b>\n"
+    text += (
+        "🎂 <b>Хто народився "
+        "цього дня</b>\n"
+    )
 
     if births:
-        text += "\n".join(births)
+
+        text += "\n".join(
+            births
+        )
+
     else:
-        text += "Не вдалося отримати список."
+
+        text += (
+            "Інформацію не знайдено."
+        )
 
     text += "\n\n"
 
-    # =====================================================
-    # ІСТОРИЧНА ПОГОДА
-    # =====================================================
+    # =================================================
+    # 🌡️ ТЕМПЕРАТУРНІ РЕКОРДИ
+    # =================================================
 
-    text += "🌡️ <b>Якою була погода цього дня</b>\n"
+    text += (
+        "🌡️ <b>Температурний "
+        "рекорд цього дня</b>\n"
+    )
 
     if city_data:
+
         lat, lon = city_data
 
-        # До повного попереднього року.
         records = _get_weather_records(
             round(lat, 4),
             round(lon, 4),
             1940,
             year - 1,
             month,
-            day,
+            day
         )
 
         if records:
+
             highs = [
-                x for x in records
-                if x["type"] == "high"
+                item
+                for item in records
+                if item["type"] == "high"
             ]
 
             lows = [
-                x for x in records
-                if x["type"] == "low"
+                item
+                for item in records
+                if item["type"] == "low"
             ]
 
             if highs:
+
                 max_record = max(
                     highs,
-                    key=lambda x: x["value"],
+                    key=lambda item:
+                    item["value"]
                 )
 
-                max_date = max_record["date"][:4]
+                max_year = (
+                    max_record["date"][:4]
+                )
 
                 text += (
-                    f"🔥 Найвища: "
-                    f"<b>{max_record['value']:.1f}°C</b> "
-                    f"({max_date} р.)\n"
+                    "🔥 Найвища: "
+                    f"<b>"
+                    f"{max_record['value']:.1f}"
+                    "°C</b> "
+                    f"({max_year} р.)\n"
                 )
 
             if lows:
+
                 min_record = min(
                     lows,
-                    key=lambda x: x["value"],
+                    key=lambda item:
+                    item["value"]
                 )
 
-                min_date = min_record["date"][:4]
+                min_year = (
+                    min_record["date"][:4]
+                )
 
                 text += (
-                    f"🥶 Найнижча: "
-                    f"<b>{min_record['value']:.1f}°C</b> "
-                    f"({min_date} р.)\n"
+                    "🥶 Найнижча: "
+                    f"<b>"
+                    f"{min_record['value']:.1f}"
+                    "°C</b> "
+                    f"({min_year} р.)\n"
                 )
 
             text += (
-                "ℹ️ Дані: історичний архів "
-                "Open-Meteo (реаналіз)."
+                "ℹ️ Історичні дані: "
+                "Open-Meteo."
             )
 
         else:
+
             text += (
-                "Історичні дані зараз недоступні."
+                "Історичні дані "
+                "недоступні."
             )
 
     else:
+
         text += (
-            "Для цього міста поки немає координат."
+            "Для цього міста "
+            "немає координат."
         )
 
     text += "\n\n"
 
-    # =====================================================
-    # ПОДІЇ
-    # =====================================================
+    # =================================================
+    # 📜 ПОДІЇ
+    # =================================================
 
     events = _format_events(
-        wiki.get("events", []),
-        limit=3,
+        wiki.get(
+            "events",
+            []
+        ),
+        limit=3
     )
 
-    text += "📜 <b>Цікаве з історії</b>\n"
+    text += (
+        "📜 <b>Цікаве цього дня</b>\n"
+    )
 
     if events:
-        text += "\n".join(events)
+
+        text += "\n".join(
+            events
+        )
+
     else:
-        text += "Історичних подій не знайдено."
+
+        text += (
+            "Українських або нейтральних "
+            "подій цього дня не знайдено."
+        )
 
     text += "\n\n"
 
+    # =================================================
+    # 😄 АНЕКДОТ
+    # =================================================
+
+    joke = random.choice(
+        JOKES
+    )
+
     text += (
-        "☀️ <i>Погодун пам'ятає, "
-        "що сьогодні вже траплялося.</i>"
+        "😄 <b>На гарний настрій</b>\n"
+        f"{escape(joke, quote=False)}\n\n"
+    )
+
+    # =================================================
+    # ☀️ ПОРАДА
+    # =================================================
+
+    tip = _get_practical_tip(
+        city
+    )
+
+    text += (
+        "☀️ <b>Порада на сьогодні</b>\n"
+        f"{escape(tip, quote=False)}\n\n"
+    )
+
+    text += (
+        "🌤 <i>Погодун бажає "
+        "гарного дня!</i>"
     )
 
     return text
