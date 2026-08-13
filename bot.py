@@ -9,6 +9,7 @@ from app.database.db import init_db
 from app.handlers.start import router as start_router
 from app.handlers.weather import router as weather_router
 from app.handlers.forecast import router as forecast_router
+from app.handlers.day_facts import router as day_facts_router
 from app.handlers.air_quality import router as air_quality_router
 from app.handlers.alerts import router as alerts_router
 from app.handlers.threats import router as threats_router
@@ -54,6 +55,7 @@ async def main():
     dp.include_router(start_router)
     dp.include_router(weather_router)
     dp.include_router(forecast_router)
+    dp.include_router(day_facts_router)
     dp.include_router(air_quality_router)
     dp.include_router(alerts_router)
     dp.include_router(threats_router)
