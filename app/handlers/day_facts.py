@@ -27,7 +27,8 @@ async def day_facts(message: Message):
 
     print(
         f"📅 DAY FACTS | "
-        f"user_id={user_id} | city={city}"
+        f"user_id={user_id} | "
+        f"city={city}"
     )
 
     text = await asyncio.to_thread(
