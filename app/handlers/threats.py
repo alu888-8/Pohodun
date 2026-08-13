@@ -7,6 +7,7 @@ from aiogram.types import Message
 from app.database.db import get_city
 from app.data.cities import CITY_API
 from app.data.regions import CITY_REGIONS
+from app.data.location_regions import CITY_OBLASTS
 
 from app.services.threats import get_threats
 from app.services.alerts import get_alerts
@@ -16,25 +17,34 @@ router = Router()
 
 
 # =====================================================
-# РАДІУС ПОШУКУ КОНКРЕТНИХ ЗАГРОЗ
+# НАЛАШТУВАННЯ
 # =====================================================
 
 THREAT_RADIUS_KM = 70
 
+KYIV_CITY = "Київ"
+KYIV_OBLAST = "Київська область"
+
 
 # =====================================================
-# ВІДСТАНЬ МІЖ ДВОМА КООРДИНАТАМИ
+# ВІДСТАНЬ МІЖ КООРДИНАТАМИ
 # =====================================================
 
 def distance_km(lat1, lon1, lat2, lon2):
 
     try:
+
         lat1 = float(lat1)
         lon1 = float(lon1)
+
         lat2 = float(lat2)
         lon2 = float(lon2)
 
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError
+    ):
+
         return None
 
     earth_radius = 6371
@@ -42,20 +52,28 @@ def distance_km(lat1, lon1, lat2, lon2):
     lat1_rad = math.radians(lat1)
     lat2_rad = math.radians(lat2)
 
-    delta_lat = math.radians(lat2 - lat1)
-    delta_lon = math.radians(lon2 - lon1)
+    delta_lat = math.radians(
+        lat2 - lat1
+    )
+
+    delta_lon = math.radians(
+        lon2 - lon1
+    )
 
     a = (
         math.sin(delta_lat / 2) ** 2
         +
         math.cos(lat1_rad)
-        * math.cos(lat2_rad)
-        * math.sin(delta_lon / 2) ** 2
+        *
+        math.cos(lat2_rad)
+        *
+        math.sin(delta_lon / 2) ** 2
     )
 
     c = (
         2
-        * math.atan2(
+        *
+        math.atan2(
             math.sqrt(a),
             math.sqrt(1 - a)
         )
@@ -70,7 +88,9 @@ def distance_km(lat1, lon1, lat2, lon2):
 
 def get_city_coordinates(city):
 
-    coordinates = CITY_API.get(city)
+    coordinates = CITY_API.get(
+        city
+    )
 
     if not coordinates:
         return None
@@ -87,7 +107,7 @@ def get_city_coordinates(city):
     except Exception as e:
 
         print(
-            f"❌ Помилка координат міста "
+            f"❌ Помилка координат "
             f"{city}: {e}"
         )
 
@@ -95,90 +115,294 @@ def get_city_coordinates(city):
 
 
 # =====================================================
-# ПЕРЕВІРКА КОНКРЕТНОЇ ЗАГРОЗИ
+# ОБЛАСТЬ МІСТА
 # =====================================================
 
-def is_threat_near_city(threat, city):
+def get_city_oblast(city):
 
-    status = (
-        threat.get("status", "active")
-        or "active"
-    ).lower()
-
-    if status not in ("active", "stale"):
-        return False
-
-    city_coordinates = get_city_coordinates(city)
-
-    threat_lat = threat.get("lat")
-    threat_lon = threat.get("lon")
-
-    # -------------------------------------------------
-    # ОСНОВНИЙ СПОСІБ — КООРДИНАТИ
-    # -------------------------------------------------
-
-    if (
-        city_coordinates
-        and threat_lat is not None
-        and threat_lon is not None
-    ):
-
-        city_lat, city_lon = city_coordinates
-
-        distance = distance_km(
-            city_lat,
-            city_lon,
-            threat_lat,
-            threat_lon
-        )
-
-        if distance is not None:
-
-            print(
-                f"📡 Загроза | "
-                f"{city} | "
-                f"{threat.get('title')} | "
-                f"{distance:.1f} км"
-            )
-
-            if distance <= THREAT_RADIUS_KM:
-                return True
-
-            # Якщо координати є і загроза далеко —
-            # НЕ використовуємо текстовий fallback.
-            return False
-
-    # -------------------------------------------------
-    # FALLBACK ПО ТЕКСТУ
-    # Використовується ТІЛЬКИ якщо координат немає
-    # -------------------------------------------------
-
-    keywords = CITY_REGIONS.get(
-        city,
-        [city.lower()]
+    return CITY_OBLASTS.get(
+        city
     )
 
-    search_text = (
-        f"{threat.get('region', '')} "
-        f"{threat.get('district', '')} "
-        f"{threat.get('locality', '')} "
-        f"{threat.get('title', '')} "
-        f"{threat.get('explanationShort', '')}"
-    ).lower()
 
-    for keyword in keywords:
+# =====================================================
+# ЧИ АКТИВНИЙ ЕЛЕМЕНТ API
+# =====================================================
 
-        if keyword.lower() in search_text:
+def is_item_active(item):
+
+    if not item:
+        return False
+
+    if item.get("since"):
+        return True
+
+    if item.get("active") is True:
+        return True
+
+    status = item.get("status")
+
+    if isinstance(status, str):
+
+        if status.lower() in (
+            "active",
+            "activated",
+            "тривога"
+        ):
             return True
 
+    if status is True:
+        return True
+
     return False
+
+
+# =====================================================
+# АКТИВНІ РАЙОНИ ОБЛАСТІ
+# =====================================================
+
+def get_active_oblast_raions(
+    oblast,
+    alerts_data
+):
+
+    if not alerts_data:
+        return []
+
+    raions = alerts_data.get(
+        "raions",
+        []
+    )
+
+    result = []
+
+    for item in raions:
+
+        item_oblast = (
+            item.get(
+                "oblast",
+                ""
+            )
+            .strip()
+            .lower()
+        )
+
+        if (
+            item_oblast
+            != oblast.strip().lower()
+        ):
+            continue
+
+        if is_item_active(item):
+
+            result.append(item)
+
+    return result
+
+
+# =====================================================
+# СТАН КИЄВА
+# =====================================================
+
+def get_kyiv_city_alert(
+    alerts_data
+):
+
+    if not alerts_data:
+        return False
+
+    raions = alerts_data.get(
+        "raions",
+        []
+    )
+
+    oblasts = alerts_data.get(
+        "oblasts",
+        []
+    )
+
+    # -------------------------------------------------
+    # Шукаємо тільки саме Київ
+    # -------------------------------------------------
+
+    for item in raions + oblasts:
+
+        name = (
+            item.get(
+                "name",
+                ""
+            )
+            .strip()
+            .lower()
+        )
+
+        key = (
+            item.get(
+                "key",
+                ""
+            )
+            .strip()
+            .lower()
+        )
+
+        if name in (
+            "київ",
+            "м. київ",
+            "місто київ"
+        ):
+
+            return is_item_active(item)
+
+        if key in (
+            "київ",
+            "м. київ",
+            "місто київ"
+        ):
+
+            return is_item_active(item)
+
+    return False
+
+
+# =====================================================
+# СТАН КОНКРЕТНОЇ ЛОКАЦІЇ
+# =====================================================
+
+def get_location_alert(
+    city,
+    alerts_data
+):
+
+    # -------------------------------------------------
+    # КИЇВ — ОСОБЛИВИЙ ВИПАДОК
+    #
+    # Київ ≠ Київська область
+    # -------------------------------------------------
+
+    if city == KYIV_CITY:
+
+        return get_kyiv_city_alert(
+            alerts_data
+        )
+
+    # -------------------------------------------------
+    # ІНШІ МІСТА
+    #
+    # Поки API дає районний статус,
+    # не будемо брехати користувачу,
+    # що тривога саме в місті.
+    # -------------------------------------------------
+
+    return False
+
+
+# =====================================================
+# КОНКРЕТНІ ЗАГРОЗИ ПОБЛИЗУ
+# =====================================================
+
+def find_nearby_threats(
+    city,
+    threats_data
+):
+
+    result = []
+
+    if not threats_data:
+        return result
+
+    city_coordinates = (
+        get_city_coordinates(city)
+    )
+
+    for threat in threats_data:
+
+        status = (
+            threat.get(
+                "status",
+                "active"
+            )
+            or "active"
+        ).lower()
+
+        if status not in (
+            "active",
+            "stale"
+        ):
+            continue
+
+        threat_lat = threat.get(
+            "lat"
+        )
+
+        threat_lon = threat.get(
+            "lon"
+        )
+
+        distance = None
+
+        if (
+            city_coordinates
+            and threat_lat is not None
+            and threat_lon is not None
+        ):
+
+            distance = distance_km(
+                city_coordinates[0],
+                city_coordinates[1],
+                threat_lat,
+                threat_lon
+            )
+
+            if distance is None:
+                continue
+
+            if distance > THREAT_RADIUS_KM:
+                continue
+
+        else:
+
+            # Якщо координат немає —
+            # використовуємо текстовий пошук.
+
+            keywords = CITY_REGIONS.get(
+                city,
+                [city.lower()]
+            )
+
+            search_text = (
+                f"{threat.get('region', '')} "
+                f"{threat.get('district', '')} "
+                f"{threat.get('locality', '')} "
+                f"{threat.get('title', '')} "
+                f"{threat.get('explanationShort', '')}"
+            ).lower()
+
+            found = any(
+                keyword.lower()
+                in search_text
+                for keyword in keywords
+            )
+
+            if not found:
+                continue
+
+        result.append(
+            {
+                "threat": threat,
+                "distance": distance
+            }
+        )
+
+    return result
 
 
 # =====================================================
 # ІКОНКА ЗАГРОЗИ
 # =====================================================
 
-def get_threat_icon(threat_type):
+def get_threat_icon(
+    threat_type
+):
 
     return {
         "uav": "🛸",
@@ -199,7 +423,12 @@ def get_threat_icon(threat_type):
 # ФОРМУВАННЯ КОНКРЕТНОЇ ЗАГРОЗИ
 # =====================================================
 
-def format_threat(threat, city):
+def format_threat(
+    item
+):
+
+    threat = item["threat"]
+    distance = item["distance"]
 
     icon = get_threat_icon(
         threat.get("type")
@@ -229,32 +458,6 @@ def format_threat(threat, city):
         "sourceCount"
     )
 
-    city_coordinates = get_city_coordinates(city)
-
-    threat_lat = threat.get("lat")
-    threat_lon = threat.get("lon")
-
-    distance_text = ""
-
-    if (
-        city_coordinates
-        and threat_lat is not None
-        and threat_lon is not None
-    ):
-
-        distance = distance_km(
-            city_coordinates[0],
-            city_coordinates[1],
-            threat_lat,
-            threat_lon
-        )
-
-        if distance is not None:
-            distance_text = (
-                f"📏 Відстань: "
-                f"<b>{distance:.0f} км</b>\n"
-            )
-
     text = (
         f"{icon} <b>{title}</b>\n"
     )
@@ -277,7 +480,12 @@ def format_threat(threat, city):
             f"📌 {locality}\n"
         )
 
-    text += distance_text
+    if distance is not None:
+
+        text += (
+            f"📏 Відстань: "
+            f"<b>{distance:.0f} км</b>\n"
+        )
 
     if source_count:
 
@@ -290,145 +498,6 @@ def format_threat(threat, city):
 
 
 # =====================================================
-# ПЕРЕВІРКА ПОВІТРЯНОЇ ТРИВОГИ
-# =====================================================
-
-def is_city_alert_active(city, data):
-
-    if not data:
-        return False
-
-    raions = data.get(
-        "raions",
-        []
-    )
-
-    oblasts = data.get(
-        "oblasts",
-        []
-    )
-
-    # =================================================
-    # КИЇВ
-    # =================================================
-
-    if city == "Київ":
-
-        for item in raions + oblasts:
-
-            name = (
-                item.get("name", "")
-                .strip()
-                .lower()
-            )
-
-            key = (
-                item.get("key", "")
-                .strip()
-                .lower()
-            )
-
-            if (
-                name in (
-                    "київ",
-                    "м. київ",
-                    "місто київ"
-                )
-                or key in (
-                    "київ",
-                    "м. київ",
-                    "місто київ"
-                )
-            ):
-
-                return bool(
-                    item.get("since")
-                    or item.get("active") is True
-                    or item.get("status") is True
-                    or (
-                        isinstance(
-                            item.get("status"),
-                            str
-                        )
-                        and item.get(
-                            "status"
-                        ).lower()
-                        in (
-                            "active",
-                            "activated",
-                            "тривога"
-                        )
-                    )
-                )
-
-        return False
-
-    # =================================================
-    # ІНШІ МІСТА
-    # =================================================
-
-    keywords = CITY_REGIONS.get(
-        city,
-        [city.lower()]
-    )
-
-    keywords = [
-        word.lower()
-        for word in keywords
-    ]
-
-    for item in raions:
-
-        name = (
-            item.get("name", "")
-            .lower()
-        )
-
-        oblast = (
-            item.get("oblast", "")
-            .lower()
-        )
-
-        key = (
-            item.get("key", "")
-            .lower()
-        )
-
-        search_text = (
-            f"{name} "
-            f"{oblast} "
-            f"{key}"
-        )
-
-        if any(
-            word in search_text
-            for word in keywords
-        ):
-
-            return bool(
-                item.get("since")
-                or item.get("active") is True
-                or item.get("status") is True
-                or (
-                    isinstance(
-                        item.get("status"),
-                        str
-                    )
-                    and item.get(
-                        "status"
-                    ).lower()
-                    in (
-                        "active",
-                        "activated",
-                        "тривога"
-                    )
-                )
-            )
-
-    return False
-
-
-# =====================================================
 # КНОПКА ЗАГРОЗ
 # =====================================================
 
@@ -436,11 +505,17 @@ def is_city_alert_active(city, data):
     lambda message:
     message.text == "🛰 Загрози"
 )
-async def threats(message: Message):
+async def threats(
+    message: Message
+):
 
-    user_id = message.from_user.id
+    user_id = (
+        message.from_user.id
+    )
 
-    city = get_city(user_id)
+    city = get_city(
+        user_id
+    )
 
     print(
         f"🛰 THREATS | "
@@ -451,88 +526,103 @@ async def threats(message: Message):
     if not city:
 
         await message.answer(
-            "❌ Спочатку оберіть місто."
+            "❌ Спочатку оберіть "
+            "свою локацію."
         )
 
         return
 
     # =================================================
-    # ОТРИМУЄМО ОБИДВА API
+    # API
     # =================================================
 
-    threats_data_api = await asyncio.to_thread(
+    threats_api = await asyncio.to_thread(
         get_threats
     )
 
-    alerts_data = await asyncio.to_thread(
+    alerts_api = await asyncio.to_thread(
         get_alerts
     )
 
     # =================================================
-    # ПЕРЕВІРЯЄМО ТРИВОГУ
+    # СТАН КОНКРЕТНОГО МІСТА
     # =================================================
 
-    alert_active = is_city_alert_active(
+    city_alert = get_location_alert(
         city,
-        alerts_data
-    )
-
-    print(
-        f"🚨 THREATS | "
-        f"city={city} | "
-        f"alert_active={alert_active}"
+        alerts_api
     )
 
     # =================================================
-    # ШУКАЄМО КОНКРЕТНІ ЗАГРОЗИ
+    # ОБЛАСТЬ
     # =================================================
 
-    result = []
+    city_oblast = get_city_oblast(
+        city
+    )
 
-    if threats_data_api:
+    oblast_raions = (
+        get_active_oblast_raions(
+            city_oblast,
+            alerts_api
+        )
+        if city_oblast
+        else []
+    )
 
-        threats_data = threats_data_api.get(
+    oblast_alert = bool(
+        oblast_raions
+    )
+
+    # =================================================
+    # КОНКРЕТНІ ЗАГРОЗИ
+    # =================================================
+
+    threats_data = []
+
+    if threats_api:
+
+        threats_data = threats_api.get(
             "threats",
             []
         )
 
-        print(
-            f"🛰 THREATS API | "
-            f"count={len(threats_data)}"
-        )
-
-        for threat in threats_data:
-
-            if is_threat_near_city(
-                threat,
-                city
-            ):
-
-                result.append(
-                    format_threat(
-                        threat,
-                        city
-                    )
-                )
+    nearby_threats = find_nearby_threats(
+        city,
+        threats_data
+    )
 
     # =================================================
-    # ФОРМУЄМО ЗРОЗУМІЛУ ВІДПОВІДЬ
+    # ЛОГ
+    # =================================================
+
+    print(
+        f"🛰 LOCATION STATUS | "
+        f"city={city} | "
+        f"city_alert={city_alert} | "
+        f"oblast={city_oblast} | "
+        f"oblast_alert={oblast_alert} | "
+        f"threats={len(nearby_threats)}"
+    )
+
+    # =================================================
+    # ПОЧАТОК ПОВІДОМЛЕННЯ
     # =================================================
 
     text = (
-        "🛰 <b>ЗАГРОЗИ</b>\n\n"
+        "🛰 <b>СТАН БЕЗПЕКИ</b>\n\n"
         f"📍 <b>{city}</b>\n\n"
     )
 
     # =================================================
-    # СТАН ТРИВОГИ
+    # 1. КОНКРЕТНА ЛОКАЦІЯ
     # =================================================
 
     text += (
-        "🚨 <b>СТАН ТРИВОГИ</b>\n"
+        "🚨 <b>МОЯ ЛОКАЦІЯ</b>\n"
     )
 
-    if alert_active:
+    if city_alert:
 
         text += (
             "🔴 Повітряна тривога: "
@@ -542,60 +632,147 @@ async def threats(message: Message):
     else:
 
         text += (
-            "🟢 Повітряна тривога: "
+            "🟢 Повітряної тривоги "
             "<b>НЕМАЄ</b>\n\n"
         )
 
     # =================================================
-    # КОНКРЕТНІ ЗАГРОЗИ
+    # 2. ОБЛАСТЬ
     # =================================================
 
-    text += (
-        "📡 <b>КОНКРЕТНІ ЗАГРОЗИ</b>\n"
-    )
-
-    if result:
+    if city_oblast:
 
         text += (
-            "\n"
-            +
-            "\n\n".join(result)
-            +
-            "\n"
+            f"🗺 <b>{city_oblast.upper()}</b>\n"
         )
 
-    else:
-
-        text += (
-            "🟢 Поблизу активних "
-            "конкретних загроз не виявлено.\n"
-        )
-
-        if alert_active:
+        if oblast_alert:
 
             text += (
-                "\n"
-                "ℹ️ Тривога активна, але "
-                "Threats API наразі не передає "
-                "конкретну загрозу поблизу міста.\n"
+                "🟡 У частині області "
+                "<b>АКТИВНА ТРИВОГА</b>\n"
+            )
+
+            if oblast_raions:
+
+                text += (
+                    "\n📍 <b>Активні райони:</b>\n"
+                )
+
+                for item in oblast_raions:
+
+                    name = item.get(
+                        "name",
+                        "Невідомий район"
+                    )
+
+                    text += (
+                        f"• {name}\n"
+                    )
+
+            text += "\n"
+
+        else:
+
+            text += (
+                "🟢 Активної тривоги "
+                "в області не виявлено.\n\n"
             )
 
     # =================================================
-    # ЗАСТЕРЕЖЕННЯ
+    # 3. КОНКРЕТНІ ЗАГРОЗИ
     # =================================================
 
-    if alert_active:
+    text += (
+        "📡 <b>КОНКРЕТНІ ЗАГРОЗИ ПОБЛИЗУ</b>\n"
+    )
+
+    if nearby_threats:
+
+        text += "\n"
+
+        for item in nearby_threats:
+
+            text += (
+                format_threat(item)
+                +
+                "\n\n"
+            )
+
+        text = text.rstrip()
+
+    else:
 
         text += (
-            "\n⚠️ <b>Перебувайте "
+            "🟢 Конкретних активних "
+            "загроз у радіусі "
+            f"{THREAT_RADIUS_KM} км "
+            "не виявлено.\n"
+        )
+
+    # =================================================
+    # 4. ПОЯСНЕННЯ
+    # =================================================
+
+    if city == KYIV_CITY:
+
+        if (
+            not city_alert
+            and oblast_alert
+        ):
+
+            text += (
+                "\n\n"
+                "ℹ️ <b>Важливо:</b> "
+                "тривога в Київській області "
+                "не означає автоматично "
+                "тривогу в Києві."
+            )
+
+        if (
+            not city_alert
+            and nearby_threats
+        ):
+
+            text += (
+                "\n\n"
+                "⚠️ <b>Увага:</b> "
+                "конкретна загроза знаходиться "
+                "поблизу Києва, але "
+                "повітряна тривога "
+                "в Києві наразі не оголошена."
+            )
+
+    # =================================================
+    # 5. РЕКОМЕНДАЦІЯ
+    # =================================================
+
+    if city_alert:
+
+        text += (
+            "\n\n"
+            "⚠️ <b>Перебувайте "
             "в безпечному місці.</b>"
+        )
+
+    elif nearby_threats:
+
+        text += (
+            "\n\n"
+            "🟡 <b>Слідкуйте за офіційними "
+            "повідомленнями.</b>"
         )
 
     else:
 
         text += (
-            "\n🛡 Залишайтеся уважними."
+            "\n\n"
+            "🛡 <b>Залишайтеся уважними.</b>"
         )
+
+    # =================================================
+    # ВІДПРАВКА
+    # =================================================
 
     await message.answer(
         text,
@@ -605,6 +782,7 @@ async def threats(message: Message):
     print(
         f"✅ THREATS | "
         f"city={city} | "
-        f"alert={alert_active} | "
-        f"found={len(result)}"
+        f"city_alert={city_alert} | "
+        f"oblast_alert={oblast_alert} | "
+        f"nearby={len(nearby_threats)}"
     )
