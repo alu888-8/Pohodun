@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Router
 from aiogram.types import Message
 
-from app.database.db import get_city
+from app.database.db import get_location
 from app.services.alerts import get_alerts
 
 
@@ -16,38 +16,7 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 
 
 # ============================================================
-# ТОЧНИЙ РАЙОН ДЛЯ КОЖНОГО МІСТА
-# ============================================================
-
-CITY_ALERT_KEYS = {
-    "Вінниця": "вінницький",
-    "Луцьк": "луцький",
-    "Дніпро": "дніпровський",
-    "Донецьк": "донецький",
-    "Житомир": "житомирський",
-    "Ужгород": "ужгородський",
-    "Запоріжжя": "запорізький",
-    "Івано-Франківськ": "івано-франківський",
-    "Кропивницький": "кропивницький",
-    "Луганськ": "луганський",
-    "Львів": "львівський",
-    "Миколаїв": "миколаївський",
-    "Одеса": "одеський",
-    "Полтава": "полтавський",
-    "Рівне": "рівненський",
-    "Суми": "сумський",
-    "Тернопіль": "тернопільський",
-    "Харків": "харківський",
-    "Херсон": "херсонський",
-    "Хмельницький": "хмельницький",
-    "Черкаси": "черкаський",
-    "Чернівці": "чернівецький",
-    "Чернігів": "чернігівський",
-}
-
-
-# ============================================================
-# ОБРОБКА ЧАСУ
+# ЧАС ТРИВОГИ
 # ============================================================
 
 def get_duration(since_value):
@@ -56,89 +25,59 @@ def get_duration(since_value):
         return "невідомо", "невідомо"
 
     try:
-
         utc_time = datetime.fromisoformat(
-            since_value.replace(
-                "Z",
-                "+00:00"
-            )
+            since_value.replace("Z", "+00:00")
         )
 
-        local_time = utc_time.astimezone(
-            KYIV_TZ
-        )
-
-        now = datetime.now(
-            KYIV_TZ
-        )
+        local_time = utc_time.astimezone(KYIV_TZ)
+        now = datetime.now(KYIV_TZ)
 
         duration = now - local_time
 
         minutes = max(
             0,
-            int(
-                duration.total_seconds() // 60
-            )
+            int(duration.total_seconds() // 60)
         )
 
         if minutes < 60:
-
-            duration_text = (
-                f"{minutes} хв"
-            )
-
+            duration_text = f"{minutes} хв"
         else:
-
             hours = minutes // 60
             mins = minutes % 60
 
             if mins:
-
-                duration_text = (
-                    f"{hours} год "
-                    f"{mins} хв"
-                )
-
+                duration_text = f"{hours} год {mins} хв"
             else:
+                duration_text = f"{hours} год"
 
-                duration_text = (
-                    f"{hours} год"
-                )
+        since = local_time.strftime("%H:%M")
 
-        since = local_time.strftime(
-            "%H:%M"
-        )
-
-        return (
-            since,
-            duration_text
-        )
+        return since, duration_text
 
     except Exception as e:
 
         print(
-            f"❌ Помилка обробки часу "
-            f"тривоги: {e}"
+            f"❌ Помилка обробки часу тривоги: {e}"
         )
 
-        return (
-            "невідомо",
-            "невідомо"
-        )
+        return "невідомо", "невідомо"
 
 
 # ============================================================
-# ПОШУК АКТИВНОЇ ТРИВОГИ ДЛЯ МІСТА
+# ПОШУК ТРИВОГИ ДЛЯ КОНКРЕТНОЇ ЛОКАЦІЇ
 # ============================================================
 
-def get_city_alert(
-    city,
-    data
-):
+def get_location_alert(location, data):
 
-    if not data:
+    if not location or not data:
         return None
 
+    target_key = str(
+        location.get("key", "")
+    ).strip().lower()
+
+    if not target_key:
+        return None
 
     raions = data.get(
         "raions",
@@ -150,261 +89,75 @@ def get_city_alert(
         []
     )
 
-
     # ========================================================
-    # КИЇВ — ОКРЕМО
+    # РАЙОН / ЛОКАЦІЯ
     # ========================================================
-
-    if city == "Київ":
-
-        for item in raions:
-
-            key = (
-                item.get(
-                    "key",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
-
-            name = (
-                item.get(
-                    "name",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
-
-            oblast = (
-                item.get(
-                    "oblast",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
-
-
-            # Приймаємо тільки власне Київ
-
-            if key in (
-                "київ",
-                "м. київ",
-                "м-київ",
-                "місто київ"
-            ):
-
-                return item
-
-
-            if name in (
-                "київ",
-                "м. київ",
-                "місто київ"
-            ):
-
-                if oblast in (
-                    "",
-                    "м. київ",
-                    "київ",
-                    "місто київ"
-                ):
-
-                    return item
-
-
-        # На випадок, якщо API повертає Київ
-        # в oblasts
-
-        for item in oblasts:
-
-            key = (
-                item.get(
-                    "key",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
-
-            name = (
-                item.get(
-                    "name",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
-
-            if key in (
-                "київ",
-                "м. київ",
-                "м-київ",
-                "місто київ"
-            ):
-
-                return item
-
-            if name in (
-                "київ",
-                "м. київ",
-                "місто київ"
-            ):
-
-                return item
-
-
-        return None
-
-
-    # ========================================================
-    # ІНШІ МІСТА
-    # ========================================================
-
-    target_key = CITY_ALERT_KEYS.get(
-        city
-    )
-
-    if not target_key:
-
-        print(
-            f"⚠️ Немає точного ключа "
-            f"тривоги для міста: {city}"
-        )
-
-        return None
-
-
-    target_key = target_key.lower()
-
-
-    # Шукаємо ТІЛЬКИ точний район
 
     for item in raions:
 
-        key = (
-            item.get(
-                "key",
-                ""
-            )
-            .strip()
-            .lower()
-        )
+        key = str(
+            item.get("key", "")
+        ).strip().lower()
 
         if key == target_key:
 
             print(
-                f"🔴 Знайдено точну тривогу "
-                f"{city}: {item}"
+                f"🔴 Знайдено активну тривогу | "
+                f"location={location.get('name')} | "
+                f"key={target_key}"
             )
 
             return item
 
-
-    # Додатковий варіант через точну назву
-
-    target_name = (
-        f"{target_key} район"
-    )
-
-
-    for item in raions:
-
-        name = (
-            item.get(
-                "name",
-                ""
-            )
-            .strip()
-            .lower()
-        )
-
-        if name == target_name:
-
-            print(
-                f"🔴 Знайдено тривогу "
-                f"{city} по name: {item}"
-            )
-
-            return item
-
-
     # ========================================================
-    # ОБЛАСТЬ ЯК ЗАПАСНИЙ ВАРІАНТ
-    #
-    # Наприклад, якщо API не має району,
-    # але має активну всю область.
+    # КИЇВ
     # ========================================================
 
-    city_oblasts = {
-        "Вінниця": "вінницька область",
-        "Луцьк": "волинська область",
-        "Дніпро": "дніпропетровська область",
-        "Донецьк": "донецька область",
-        "Житомир": "житомирська область",
-        "Ужгород": "закарпатська область",
-        "Запоріжжя": "запорізька область",
-        "Івано-Франківськ": "івано-франківська область",
-        "Кропивницький": "кіровоградська область",
-        "Луганськ": "луганська область",
-        "Львів": "львівська область",
-        "Миколаїв": "миколаївська область",
-        "Одеса": "одеська область",
-        "Полтава": "полтавська область",
-        "Рівне": "рівненська область",
-        "Суми": "сумська область",
-        "Тернопіль": "тернопільська область",
-        "Харків": "харківська область",
-        "Херсон": "херсонська область",
-        "Хмельницький": "хмельницька область",
-        "Черкаси": "черкаська область",
-        "Чернівці": "чернівецька область",
-        "Чернігів": "чернігівська область",
-    }
-
-
-    target_oblast = city_oblasts.get(
-        city
-    )
-
-
-    if target_oblast:
+    if target_key == "kyiv-city":
 
         for item in oblasts:
 
-            name = (
-                item.get(
-                    "name",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
+            key = str(
+                item.get("key", "")
+            ).strip().lower()
 
-            oblast = (
-                item.get(
-                    "oblast",
-                    ""
-                )
-                .strip()
-                .lower()
-            )
+            name = str(
+                item.get("name", "")
+            ).strip().lower()
 
-            if (
-                name == target_oblast
-                or oblast == target_oblast
-            ):
+            oblast = str(
+                item.get("oblast", "")
+            ).strip().lower()
 
-                print(
-                    f"🔴 Знайдено активну "
-                    f"область для {city}: "
-                    f"{item}"
-                )
-
+            if key == "kyiv-city":
                 return item
 
+            if key in (
+                "київ",
+                "м. київ",
+                "місто київ",
+            ):
+                return item
+
+            if name in (
+                "київ",
+                "м. київ",
+                "місто київ",
+            ):
+                return item
+
+            if oblast in (
+                "київ",
+                "м. київ",
+                "місто київ",
+            ):
+                return item
+
+    # ========================================================
+    # ВАЖЛИВО:
+    #
+    # НЕ ПІДМІНЯЄМО ЛОКАЦІЮ ОБЛАСТЮ.
+    # ========================================================
 
     return None
 
@@ -417,36 +170,53 @@ def get_city_alert(
     lambda message:
     message.text == "🚨 Тривоги"
 )
-async def alerts(
-    message: Message
-):
+async def alerts(message: Message):
 
-    user_id = (
-        message.from_user.id
-    )
+    user_id = message.from_user.id
 
+    # ========================================================
+    # ОТРИМУЄМО ВИБРАНУ ЛОКАЦІЮ
+    # ========================================================
 
-    city = await asyncio.to_thread(
-        get_city,
+    location = await asyncio.to_thread(
+        get_location,
         user_id
     )
 
+    if not location:
+
+        await message.answer(
+            "📍 <b>Локацію ще не вибрано.</b>\n\n"
+            "Зайдіть у ⚙️ Налаштування → "
+            "🗺 Змінити локацію.",
+            parse_mode="HTML"
+        )
+
+        return
+
+    location_name = (
+        location.get("name")
+        or "Невідома локація"
+    )
+
+    location_key = location.get(
+        "key"
+    )
 
     print(
         f"🚨 Перевірка тривоги | "
         f"user_id={user_id} | "
-        f"city={city}"
+        f"location={location_name} | "
+        f"key={location_key}"
     )
 
-
     # ========================================================
-    # API
+    # ОТРИМУЄМО АКТУАЛЬНІ ДАНІ
     # ========================================================
 
     data = await asyncio.to_thread(
         get_alerts
     )
-
 
     if data is None:
 
@@ -458,54 +228,43 @@ async def alerts(
 
         return
 
-
     print(
         f"🚨 API | "
-        f"raions="
-        f"{len(data.get('raions', []))} | "
-        f"oblasts="
-        f"{len(data.get('oblasts', []))}"
+        f"raions={len(data.get('raions', []))} | "
+        f"oblasts={len(data.get('oblasts', []))}"
     )
 
-
     # ========================================================
-    # ШУКАЄМО ТОЧНИЙ ЗАПИС
+    # ШУКАЄМО СТАН САМЕ ВИБРАНОЇ ЛОКАЦІЇ
     # ========================================================
 
-    region_alert = get_city_alert(
-        city,
+    location_alert = get_location_alert(
+        location,
         data
     )
-
 
     # ========================================================
     # АКТИВНА ТРИВОГА
     # ========================================================
 
-    if region_alert:
+    if location_alert:
 
-        since_value = region_alert.get(
+        since_value = location_alert.get(
             "since"
         )
 
-
-        since, duration_text = (
-            get_duration(
-                since_value
-            )
+        since, duration_text = get_duration(
+            since_value
         )
-
 
         text = (
             "🚨 <b>Повітряна тривога</b>\n\n"
-            f"📍 <b>{city}</b>\n\n"
+            f"📍 <b>{location_name}</b>\n\n"
             "🔴 Статус: <b>Активна</b>\n"
             f"🕒 Початок: <b>{since}</b>\n"
-            f"⏱ Триває: "
-            f"<b>{duration_text}</b>\n\n"
+            f"⏱ Триває: <b>{duration_text}</b>\n\n"
             "⚠️ Будьте в безпечному місці."
         )
-
 
     # ========================================================
     # ТРИВОГИ НЕМАЄ
@@ -514,18 +273,16 @@ async def alerts(
     else:
 
         print(
-            f"🟢 Активної тривоги "
-            f"не знайдено | "
-            f"city={city}"
+            f"🟢 Активної тривоги не знайдено | "
+            f"location={location_name} | "
+            f"key={location_key}"
         )
 
-
         text = (
-            f"🟢 <b>{city}</b>\n\n"
+            f"🟢 <b>{location_name}</b>\n\n"
             "✅ Повітряної тривоги немає\n\n"
             "🛡 Залишайтеся уважними."
         )
-
 
     await message.answer(
         text,

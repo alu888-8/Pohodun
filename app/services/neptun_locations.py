@@ -742,3 +742,146 @@ def find_raion_by_name(
             return item
 
     return None
+
+
+# =====================================================
+# НАСЕЛЕНІ ПУНКТИ ДЛЯ МОНІТОРИНГУ
+# =====================================================
+
+def find_raion_by_coordinates(latitude, longitude):
+    """
+    Знаходить район NEPTUN за координатами.
+    Координати: latitude, longitude.
+    """
+
+    point = (float(longitude), float(latitude))
+
+    for raion in get_locations()["raions"]:
+        if _point_in_geometry(point, raion.get("geometry")):
+            return {
+                "key": raion["key"],
+                "name": raion["name"],
+                "oblast_key": raion.get("oblast_key"),
+                "oblast_name": raion.get("oblast_name"),
+            }
+
+    return None
+
+
+@lru_cache(maxsize=1)
+def get_city_locations():
+    """
+    Формує список міст для моніторингу з CITY_API.
+
+    Район та область визначаються автоматично
+    за геометрією NEPTUN.
+
+    Київ обробляється окремо як місто зі спеціальним
+    адміністративним статусом.
+    """
+
+    from app.data.cities import CITY_API
+
+    data = get_locations()
+
+    oblast_by_key = {
+        item["key"]: item
+        for item in data["oblasts"]
+    }
+
+    result = []
+
+    for city, coordinates in CITY_API.items():
+
+        try:
+            latitude, longitude = (
+                float(value.strip())
+                for value in coordinates.split(",")
+            )
+        except (ValueError, AttributeError):
+            print(
+                f"⚠️ NEPTUN | Некоректні координати: {city}"
+            )
+            continue
+
+        # Київ — окрема адміністративна одиниця.
+        if city == "Київ":
+            result.append({
+                "key": "kyiv-city",
+                "name": "Київ",
+                "type": "city",
+                "oblast_key": "kyiv-city",
+                "oblast_name": "Київ",
+                "raion_key": None,
+                "raion_name": None,
+                "latitude": latitude,
+                "longitude": longitude,
+            })
+            continue
+
+        raion = find_raion_by_coordinates(
+            latitude,
+            longitude,
+        )
+
+        if raion is None:
+            print(
+                f"⚠️ NEPTUN | "
+                f"Не вдалося визначити район для: {city}"
+            )
+            continue
+
+        oblast_key = raion.get("oblast_key")
+        oblast_name = raion.get("oblast_name")
+
+        if oblast_key in oblast_by_key:
+            oblast_name = oblast_by_key[oblast_key]["name"]
+
+        result.append({
+            "key": city.lower(),
+            "name": city,
+            "type": "city",
+            "oblast_key": oblast_key,
+            "oblast_name": oblast_name,
+            "raion_key": raion["key"],
+            "raion_name": raion["name"],
+            "latitude": latitude,
+            "longitude": longitude,
+        })
+
+    result.sort(
+        key=lambda item: item["name"].lower()
+    )
+
+    return result
+
+
+def get_city_location_names():
+    """
+    Повертає міста у форматі для клавіатури.
+    """
+
+    return [
+        {
+            "key": item["key"],
+            "name": item["name"],
+        }
+        for item in get_city_locations()
+    ]
+
+
+def find_city_location(city_name):
+    """
+    Знаходить місто за назвою.
+    """
+
+    if not city_name:
+        return None
+
+    target = str(city_name).strip().lower()
+
+    for city in get_city_locations():
+        if city["name"].strip().lower() == target:
+            return city
+
+    return None

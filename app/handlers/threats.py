@@ -1,302 +1,34 @@
 import math
-import asyncio
 
 from aiogram import Router
 from aiogram.types import Message
 
-from app.database.db import get_city
-from app.data.cities import CITY_API
-from app.data.regions import CITY_REGIONS
-
+from app.database.db import get_location
 from app.services.threats import get_threats
-from app.services.alerts import get_alerts
+from app.services.neptun_locations import get_city_locations
 
 
 router = Router()
 
 
-# =====================================================
+# ============================================================
 # НАЛАШТУВАННЯ
-# =====================================================
+# ============================================================
 
+# Максимальна відстань, на якій показуємо загрозу
+# відносно вибраного міста.
 THREAT_RADIUS_KM = 70
 
 
-# =====================================================
-# МІСТО → РАЙОН
-#
-# Для міст, де API працює по районах,
-# визначаємо район, до якого належить місто.
-# =====================================================
-
-CITY_RAIONS = {
-
-    # -------------------------
-    # КИЇВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Біла Церква": "Білоцерківський район",
-    "Бровари": "Броварський район",
-    "Бориспіль": "Бориспільський район",
-    "Буча": "Бучанський район",
-    "Ірпінь": "Бучанський район",
-    "Вишгород": "Вишгородський район",
-    "Фастів": "Фастівський район",
-    "Обухів": "Обухівський район",
-
-    # -------------------------
-    # ЧЕРНІГІВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Чернігів": "Чернігівський район",
-    "Ніжин": "Ніжинський район",
-    "Прилуки": "Прилуцький район",
-    "Корюківка": "Корюківський район",
-
-    # -------------------------
-    # ЖИТОМИРСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Житомир": "Житомирський район",
-    "Бердичів": "Бердичівський район",
-    "Коростень": "Коростенський район",
-    "Звягель": "Звягельський район",
-
-    # -------------------------
-    # ВІННИЦЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Вінниця": "Вінницький район",
-    "Жмеринка": "Жмеринський район",
-    "Могилів-Подільський": "Могилів-Подільський район",
-    "Хмільник": "Хмільницький район",
-
-    # -------------------------
-    # ВОЛИНСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Луцьк": "Луцький район",
-    "Ковель": "Ковельський район",
-    "Володимир": "Володимирський район",
-    "Камінь-Каширський": "Камінь-Каширський район",
-
-    # -------------------------
-    # РІВНЕНСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Рівне": "Рівненський район",
-    "Дубно": "Дубенський район",
-    "Вараш": "Вараський район",
-    "Сарни": "Сарненський район",
-
-    # -------------------------
-    # ЛЬВІВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Львів": "Львівський район",
-    "Дрогобич": "Дрогобицький район",
-    "Стрий": "Стрийський район",
-    "Червоноград": "Червоноградський район",
-    "Самбір": "Самбірський район",
-    "Золочів": "Золочівський район",
-
-    # -------------------------
-    # ТЕРНОПІЛЬСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Тернопіль": "Тернопільський район",
-    "Чортків": "Чортківський район",
-    "Кременець": "Кременецький район",
-
-    # -------------------------
-    # ХМЕЛЬНИЦЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Хмельницький": "Хмельницький район",
-    "Кам'янець-Подільський": "Кам'янець-Подільський район",
-    "Шепетівка": "Шепетівський район",
-
-    # -------------------------
-    # ЧЕРНІВЕЦЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Чернівці": "Чернівецький район",
-    "Вижниця": "Вижницький район",
-    "Дністровський": "Дністровський район",
-
-    # -------------------------
-    # ІВАНО-ФРАНКІВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Івано-Франківськ": "Івано-Франківський район",
-    "Калуш": "Калуський район",
-    "Коломия": "Коломийський район",
-    "Надвірна": "Надвірнянський район",
-
-    # -------------------------
-    # ЗАКАРПАТСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Ужгород": "Ужгородський район",
-    "Мукачево": "Мукачівський район",
-    "Хуст": "Хустський район",
-    "Берегове": "Берегівський район",
-
-    # -------------------------
-    # ОДЕСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Одеса": "Одеський район",
-    "Ізмаїл": "Ізмаїльський район",
-    "Білгород-Дністровський": "Білгород-Дністровський район",
-    "Подільськ": "Подільський район",
-
-    # -------------------------
-    # МИКОЛАЇВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Миколаїв": "Миколаївський район",
-    "Вознесенськ": "Вознесенський район",
-    "Первомайськ": "Первомайський район",
-
-    # -------------------------
-    # ХЕРСОНСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Херсон": "Херсонський район",
-    "Берислав": "Бериславський район",
-    "Генічеськ": "Генічеський район",
-
-    # -------------------------
-    # ЗАПОРІЗЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Запоріжжя": "Запорізький район",
-    "Бердянськ": "Бердянський район",
-    "Мелітополь": "Мелітопольський район",
-    "Василівка": "Василівський район",
-
-    # -------------------------
-    # ДНІПРОПЕТРОВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Дніпро": "Дніпровський район",
-    "Кам'янське": "Кам’янський район",
-    "Кривий Ріг": "Криворізький район",
-    "Нікополь": "Нікопольський район",
-    "Синельникове": "Синельниківський район",
-
-    # -------------------------
-    # ПОЛТАВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Полтава": "Полтавський район",
-    "Кременчук": "Кременчуцький район",
-    "Лубни": "Лубенський район",
-    "Миргород": "Миргородський район",
-
-    # -------------------------
-    # ХАРКІВСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Харків": "Харківський район",
-    "Ізюм": "Ізюмський район",
-    "Куп'янськ": "Куп'янський район",
-    "Чугуїв": "Чугуївський район",
-    "Богодухів": "Богодухівський район",
-
-    # -------------------------
-    # СУМСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Суми": "Сумський район",
-    "Конотоп": "Конотопський район",
-    "Шостка": "Шосткинський район",
-    "Охтирка": "Охтирський район",
-    "Ромни": "Роменський район",
-
-    # -------------------------
-    # ЧЕРКАСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Черкаси": "Черкаський район",
-    "Умань": "Уманський район",
-    "Золотоноша": "Золотоніський район",
-    "Звенигородка": "Звенигородський район",
-
-    # -------------------------
-    # КІРОВОГРАДСЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Кропивницький": "Кропивницький район",
-    "Олександрія": "Олександрійський район",
-    "Голованівськ": "Голованівський район",
-
-    # -------------------------
-    # ДОНЕЦЬКА ОБЛАСТЬ
-    # -------------------------
-
-    "Краматорськ": "Краматорський район",
-    "Слов'янськ": "Краматорський район",
-    "Покровськ": "Покровський район",
-    "Бахмут": "Бахмутський район",
-}
-
-
-# =====================================================
-# ОБЛАСТЬ МІСТА
-# =====================================================
-
-CITY_OBLASTS = {
-
-    "Київ": "Київська область",
-
-    "Біла Церква": "Київська область",
-    "Бровари": "Київська область",
-    "Бориспіль": "Київська область",
-    "Буча": "Київська область",
-    "Ірпінь": "Київська область",
-    "Вишгород": "Київська область",
-    "Фастів": "Київська область",
-    "Обухів": "Київська область",
-
-    "Чернігів": "Чернігівська область",
-    "Ніжин": "Чернігівська область",
-    "Прилуки": "Чернігівська область",
-    "Корюківка": "Чернігівська область",
-
-    "Житомир": "Житомирська область",
-    "Вінниця": "Вінницька область",
-    "Луцьк": "Волинська область",
-    "Рівне": "Рівненська область",
-    "Львів": "Львівська область",
-    "Тернопіль": "Тернопільська область",
-    "Хмельницький": "Хмельницька область",
-    "Чернівці": "Чернівецька область",
-    "Івано-Франківськ": "Івано-Франківська область",
-    "Ужгород": "Закарпатська область",
-    "Одеса": "Одеська область",
-    "Миколаїв": "Миколаївська область",
-    "Херсон": "Херсонська область",
-    "Запоріжжя": "Запорізька область",
-    "Дніпро": "Дніпропетровська область",
-    "Полтава": "Полтавська область",
-    "Харків": "Харківська область",
-    "Суми": "Сумська область",
-    "Черкаси": "Черкаська область",
-    "Кропивницький": "Кіровоградська область",
-}
-
-
-# =====================================================
+# ============================================================
 # ВІДСТАНЬ МІЖ КООРДИНАТАМИ
-# =====================================================
+# ============================================================
 
 def distance_km(
     lat1,
     lon1,
     lat2,
-    lon2
+    lon2,
 ):
 
     try:
@@ -308,725 +40,535 @@ def distance_km(
 
     except (
         TypeError,
-        ValueError
+        ValueError,
     ):
 
         return None
 
-    earth_radius = 6371
+    radius = 6371.0
 
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
 
-    delta_lat = math.radians(
+    delta_phi = math.radians(
         lat2 - lat1
     )
 
-    delta_lon = math.radians(
+    delta_lambda = math.radians(
         lon2 - lon1
     )
 
     a = (
-        math.sin(delta_lat / 2) ** 2
+        math.sin(delta_phi / 2) ** 2
         +
-        math.cos(lat1_rad)
-        *
-        math.cos(lat2_rad)
-        *
-        math.sin(delta_lon / 2) ** 2
+        math.cos(phi1)
+        * math.cos(phi2)
+        * math.sin(delta_lambda / 2) ** 2
     )
 
-    c = (
-        2
-        *
-        math.atan2(
-            math.sqrt(a),
-            math.sqrt(1 - a)
-        )
+    c = 2 * math.atan2(
+        math.sqrt(a),
+        math.sqrt(1 - a)
     )
 
-    return earth_radius * c
+    return radius * c
 
 
-# =====================================================
-# КООРДИНАТИ МІСТА
-# =====================================================
+# ============================================================
+# ОТРИМАТИ ВИБРАНУ ЛОКАЦІЮ
+# ============================================================
 
-def get_city_coordinates(city):
+def get_selected_location(user_id):
 
-    coordinates = CITY_API.get(
-        city
+    location = get_location(
+        user_id
     )
 
-    if not coordinates:
+    if not location:
+
+        return None
+
+    location_key = str(
+        location.get("key", "")
+    ).strip().lower()
+
+    if not location_key:
+
+        return None
+
+    locations = get_city_locations()
+
+    for item in locations:
+
+        city_key = str(
+            item.get("key", "")
+        ).strip().lower()
+
+        raion_key = str(
+            item.get("raion_key", "")
+        ).strip().lower()
+
+        # Звичайні міста:
+        #
+        # location key:
+        # харківський
+        #
+        # city:
+        # Харків
+        #
+        # raion_key:
+        # харківський
+
+        if raion_key == location_key:
+
+            return item
+
+        # Окремі міські локації,
+        # наприклад Київ.
+
+        if city_key == location_key:
+
+            return item
+
+    return None
+
+
+# ============================================================
+# ОТРИМАТИ КООРДИНАТИ ВИБРАНОГО МІСТА
+# ============================================================
+
+def get_selected_coordinates(user_id):
+
+    location = get_selected_location(
+        user_id
+    )
+
+    if not location:
+
+        return None
+
+    latitude = location.get(
+        "latitude"
+    )
+
+    longitude = location.get(
+        "longitude"
+    )
+
+    if latitude is None or longitude is None:
+
+        return None
+
+    return {
+        "name": location.get(
+            "name"
+        ),
+        "latitude": latitude,
+        "longitude": longitude,
+        "key": location.get(
+            "key"
+        ),
+        "raion_key": location.get(
+            "raion_key"
+        ),
+        "raion_name": location.get(
+            "raion_name"
+        ),
+        "oblast_name": location.get(
+            "oblast_name"
+        ),
+    }
+
+
+# ============================================================
+# КООРДИНАТИ ЗАГРОЗИ
+# ============================================================
+
+def get_threat_coordinates(threat):
+
+    if not threat:
+
+        return None
+
+    latitude = (
+        threat.get("latitude")
+        if threat.get("latitude") is not None
+        else threat.get("lat")
+    )
+
+    longitude = (
+        threat.get("longitude")
+        if threat.get("longitude") is not None
+        else threat.get("lon")
+    )
+
+    if latitude is None or longitude is None:
+
         return None
 
     try:
 
-        lat, lon = coordinates.split(",")
-
         return (
-            float(lat.strip()),
-            float(lon.strip())
+            float(latitude),
+            float(longitude),
         )
 
-    except Exception as e:
-
-        print(
-            f"❌ Помилка координат "
-            f"{city}: {e}"
-        )
+    except (
+        TypeError,
+        ValueError,
+    ):
 
         return None
 
 
-# =====================================================
-# ПЕРЕВІРКА АКТИВНОСТІ
-# =====================================================
-
-def is_alert_active(item):
-
-    if not item:
-        return False
-
-    return bool(
-        item.get("since")
-    )
-
-
-# =====================================================
-# СТАН КОНКРЕТНОГО МІСТА
-# =====================================================
-
-def get_city_alert_status(
-    city,
-    alerts_data
-):
-
-    if not alerts_data:
-        return False
-
-    # =================================================
-    # КИЇВ
-    #
-    # Київ перевіряємо окремо.
-    # Київська область сюди НЕ підмішується.
-    # =================================================
-
-    if city == "Київ":
-
-        items = (
-            alerts_data.get("raions", [])
-            +
-            alerts_data.get("oblasts", [])
-        )
-
-        for item in items:
-
-            name = (
-                item.get("name", "")
-                .strip()
-                .lower()
-            )
-
-            key = (
-                item.get("key", "")
-                .strip()
-                .lower()
-            )
-
-            if name in (
-                "київ",
-                "м. київ",
-                "місто київ"
-            ):
-
-                return is_alert_active(
-                    item
-                )
-
-            if key in (
-                "київ",
-                "м. київ",
-                "місто київ"
-            ):
-
-                return is_alert_active(
-                    item
-                )
-
-        return False
-
-    # =================================================
-    # ІНШІ МІСТА
-    #
-    # Шукаємо конкретний район.
-    # =================================================
-
-    city_raion = CITY_RAIONS.get(
-        city
-    )
-
-    if not city_raion:
-
-        return False
-
-    target = city_raion.lower().strip()
-
-    for item in alerts_data.get(
-        "raions",
-        []
-    ):
-
-        name = (
-            item.get("name", "")
-            .strip()
-            .lower()
-        )
-
-        if name == target:
-
-            active = is_alert_active(
-                item
-            )
-
-            print(
-                f"🚨 CITY ALERT | "
-                f"city={city} | "
-                f"raion={name} | "
-                f"active={active}"
-            )
-
-            return active
-
-    return False
-
-
-# =====================================================
-# АКТИВНІ РАЙОНИ ОБЛАСТІ
-# =====================================================
-
-def get_active_oblast_raions(
-    oblast,
-    alerts_data
-):
-
-    if not alerts_data or not oblast:
-        return []
-
-    result = []
-
-    target = (
-        oblast
-        .strip()
-        .lower()
-    )
-
-    for item in alerts_data.get(
-        "raions",
-        []
-    ):
-
-        item_oblast = (
-            item.get(
-                "oblast",
-                ""
-            )
-            .strip()
-            .lower()
-        )
-
-        if item_oblast != target:
-            continue
-
-        if is_alert_active(item):
-
-            result.append(item)
-
-    return result
-
-
-# =====================================================
-# КОНКРЕТНІ ЗАГРОЗИ ПОБЛИЗУ
-# =====================================================
+# ============================================================
+# ПОШУК ЗАГРОЗ БІЛЯ ВИБРАНОГО МІСТА
+# ============================================================
 
 def find_nearby_threats(
-    city,
-    threats_data
+    user_id,
+    threats,
 ):
 
-    result = []
-
-    if not threats_data:
-        return result
-
-    city_coordinates = (
-        get_city_coordinates(city)
-    )
-
-    for threat in threats_data:
-
-        status = (
-            threat.get(
-                "status",
-                "active"
-            )
-            or "active"
-        ).lower()
-
-        if status not in (
-            "active",
-            "stale"
-        ):
-
-            continue
-
-        threat_lat = threat.get(
-            "lat"
-        )
-
-        threat_lon = threat.get(
-            "lon"
-        )
-
-        distance = None
-
-        # =================================================
-        # КООРДИНАТИ Є
-        # =================================================
-
-        if (
-            city_coordinates
-            and threat_lat is not None
-            and threat_lon is not None
-        ):
-
-            distance = distance_km(
-                city_coordinates[0],
-                city_coordinates[1],
-                threat_lat,
-                threat_lon
-            )
-
-            if distance is None:
-                continue
-
-            if distance > THREAT_RADIUS_KM:
-                continue
-
-        # =================================================
-        # КООРДИНАТ НЕМАЄ
-        # =================================================
-
-        else:
-
-            keywords = CITY_REGIONS.get(
-                city,
-                [city.lower()]
-            )
-
-            search_text = (
-                f"{threat.get('region', '')} "
-                f"{threat.get('district', '')} "
-                f"{threat.get('locality', '')} "
-                f"{threat.get('title', '')} "
-                f"{threat.get('explanationShort', '')}"
-            ).lower()
-
-            found = any(
-                keyword.lower()
-                in search_text
-                for keyword in keywords
-            )
-
-            if not found:
-                continue
-
-        result.append(
-            {
-                "threat": threat,
-                "distance": distance
-            }
-        )
-
-    return result
-
-
-# =====================================================
-# ІКОНКА ЗАГРОЗИ
-# =====================================================
-
-def get_threat_icon(
-    threat_type
-):
-
-    return {
-        "uav": "🛸",
-        "missile": "🚀",
-        "ballistic": "💥",
-        "kab": "💣",
-        "mig31k": "✈️",
-        "recon": "👀",
-        "fpv": "🛸",
-        "unknown": "❓"
-    }.get(
-        threat_type,
-        "❓"
-    )
-
-
-# =====================================================
-# ФОРМУВАННЯ ЗАГРОЗИ
-# =====================================================
-
-def format_threat(
-    item
-):
-
-    threat = item["threat"]
-    distance = item["distance"]
-
-    icon = get_threat_icon(
-        threat.get("type")
-    )
-
-    title = threat.get(
-        "title",
-        "Невідома загроза"
-    )
-
-    region = threat.get(
-        "region",
-        ""
-    )
-
-    district = threat.get(
-        "district",
-        ""
-    )
-
-    locality = threat.get(
-        "locality",
-        ""
-    )
-
-    source_count = threat.get(
-        "sourceCount"
-    )
-
-    text = (
-        f"{icon} <b>{title}</b>\n"
-    )
-
-    if region:
-
-        text += (
-            f"📍 {region}\n"
-        )
-
-    if district:
-
-        text += (
-            f"🏙 {district}\n"
-        )
-
-    if locality:
-
-        text += (
-            f"📌 {locality}\n"
-        )
-
-    if distance is not None:
-
-        text += (
-            f"📏 Відстань: "
-            f"<b>{distance:.0f} км</b>\n"
-        )
-
-    if source_count:
-
-        text += (
-            f"🔎 Підтверджень: "
-            f"<b>{source_count}</b>\n"
-        )
-
-    return text.rstrip()
-
-
-# =====================================================
-# КНОПКА ЗАГРОЗ
-# =====================================================
-
-@router.message(
-    lambda message:
-    message.text == "🛰 Загрози"
-)
-async def threats(
-    message: Message
-):
-
-    user_id = (
-        message.from_user.id
-    )
-
-    city = get_city(
+    selected = get_selected_coordinates(
         user_id
     )
 
-    print(
-        f"🛰 THREATS | "
-        f"user_id={user_id} | "
-        f"city={city}"
+    if not selected:
+
+        return []
+
+    user_lat = selected["latitude"]
+    user_lon = selected["longitude"]
+
+    result = []
+
+    for threat in threats:
+
+        if not isinstance(
+            threat,
+            dict,
+        ):
+            continue
+
+        status = str(
+            threat.get(
+                "status",
+                ""
+            )
+        ).strip().lower()
+
+        # Показуємо тільки активні загрози.
+        if status and status not in (
+            "active",
+            "activated",
+        ):
+            continue
+
+        coordinates = get_threat_coordinates(
+            threat
+        )
+
+        if not coordinates:
+
+            # Якщо API не дало координат,
+            # не вгадуємо місце загрози.
+            continue
+
+        threat_lat, threat_lon = coordinates
+
+        distance = distance_km(
+            user_lat,
+            user_lon,
+            threat_lat,
+            threat_lon,
+        )
+
+        if distance is None:
+
+            continue
+
+        if distance <= THREAT_RADIUS_KM:
+
+            item = dict(
+                threat
+            )
+
+            item["_distance_km"] = round(
+                distance,
+                1
+            )
+
+            result.append(
+                item
+            )
+
+    result.sort(
+        key=lambda x:
+        x.get(
+            "_distance_km",
+            999999
+        )
     )
 
-    if not city:
+    return result
+
+
+# ============================================================
+# НАЗВА ЗАГРОЗИ
+# ============================================================
+
+def threat_title(threat):
+
+    threat_type = str(
+        threat.get(
+            "type",
+            ""
+        )
+    ).strip().lower()
+
+    title = str(
+        threat.get(
+            "title",
+            ""
+        )
+    ).strip()
+
+    if title:
+
+        return title
+
+    mapping = {
+
+        "uav": "БпЛА",
+
+        "drone": "БпЛА",
+
+        "shahed": "БпЛА",
+
+        "missile": "Ракетна загроза",
+
+        "rocket": "Ракетна загроза",
+
+        "ballistic": "Балістична загроза",
+
+        "aircraft": "Загроза з повітря",
+
+    }
+
+    return mapping.get(
+        threat_type,
+        "Повітряна загроза"
+    )
+
+
+# ============================================================
+# МІСЦЕ ЗАГРОЗИ
+# ============================================================
+
+def threat_place(threat):
+
+    locality = str(
+        threat.get(
+            "locality",
+            ""
+        )
+    ).strip()
+
+    district = str(
+        threat.get(
+            "district",
+            ""
+        )
+    ).strip()
+
+    region = str(
+        threat.get(
+            "region",
+            ""
+        )
+    ).strip()
+
+    if locality:
+
+        return locality
+
+    if district:
+
+        return district
+
+    if region:
+
+        return region
+
+    return "Місце не визначено"
+
+
+# ============================================================
+# ФОРМУВАННЯ ПОВІДОМЛЕННЯ
+# ============================================================
+
+def build_threat_message(
+    location,
+    threats,
+):
+
+    location_name = (
+        location.get("name")
+        or "Невідома локація"
+    )
+
+    if not threats:
+
+        return (
+            f"🟢 <b>{location_name}</b>\n\n"
+            "Наразі поблизу вибраної "
+            "локації активних загроз не виявлено."
+        )
+
+    lines = [
+
+        "⚠️ <b>ЗАГРОЗИ</b>",
+        "",
+        f"📍 <b>{location_name}</b>",
+        "",
+    ]
+
+    for threat in threats:
+
+        title = threat_title(
+            threat
+        )
+
+        place = threat_place(
+            threat
+        )
+
+        distance = threat.get(
+            "_distance_km"
+        )
+
+        lines.append(
+            f"⚠️ <b>{title}</b>"
+        )
+
+        lines.append(
+            f"📍 {place}"
+        )
+
+        if distance is not None:
+
+            lines.append(
+                f"📏 Приблизно {distance} км"
+            )
+
+        lines.append("")
+
+    lines.extend(
+        [
+            "Будьте уважні та стежте "
+            "за офіційними повідомленнями.",
+        ]
+    )
+
+    return "\n".join(
+        lines
+    )
+
+
+# ============================================================
+# КНОПКА «ЗАГРОЗИ»
+# ============================================================
+
+@router.message(
+    lambda message:
+    message.text == "⚠️ Загрози"
+)
+async def threats_handler(
+    message: Message
+):
+
+    user_id = message.from_user.id
+
+    # ========================================================
+    # ЛОКАЦІЯ КОРИСТУВАЧА
+    # ========================================================
+
+    location = get_selected_location(
+        user_id
+    )
+
+    if not location:
 
         await message.answer(
-            "❌ Спочатку оберіть "
-            "свою локацію."
+            "📍 <b>Локацію ще не вибрано.</b>\n\n"
+            "Зайдіть у ⚙️ Налаштування → "
+            "🗺 Змінити локацію.",
+            parse_mode="HTML"
         )
 
         return
 
-    # =================================================
-    # ОТРИМУЄМО API
-    # =================================================
+    location_name = location.get(
+        "name"
+    ) or "Невідома локація"
 
-    threats_api = await asyncio.to_thread(
-        get_threats
+    print(
+        f"⚠️ Перевірка загроз | "
+        f"user_id={user_id} | "
+        f"location={location_name} | "
+        f"key={location.get('key')}"
     )
 
-    alerts_api = await asyncio.to_thread(
-        get_alerts
-    )
+    # ========================================================
+    # API
+    # ========================================================
 
-    # =================================================
-    # МОЯ ЛОКАЦІЯ
-    # =================================================
+    data = get_threats()
 
-    city_alert = get_city_alert_status(
-        city,
-        alerts_api
-    )
+    if data is None:
 
-    # =================================================
-    # ОБЛАСТЬ
-    # =================================================
-
-    city_oblast = CITY_OBLASTS.get(
-        city
-    )
-
-    active_oblast_raions = (
-        get_active_oblast_raions(
-            city_oblast,
-            alerts_api
-        )
-        if city_oblast
-        else []
-    )
-
-    # =================================================
-    # КОНКРЕТНІ ЗАГРОЗИ
-    # =================================================
-
-    threats_data = []
-
-    if threats_api:
-
-        threats_data = threats_api.get(
-            "threats",
-            []
+        await message.answer(
+            "❌ Не вдалося отримати "
+            "актуальну інформацію "
+            "про загрози."
         )
 
-    nearby_threats = find_nearby_threats(
-        city,
-        threats_data
+        return
+
+    threats = data.get(
+        "threats",
+        []
     )
 
     print(
-        f"🛰 STATUS | "
-        f"city={city} | "
-        f"city_alert={city_alert} | "
-        f"oblast={city_oblast} | "
-        f"active_raions={len(active_oblast_raions)} | "
-        f"nearby_threats={len(nearby_threats)}"
+        f"⚠️ Загроз в API: {len(threats)}"
     )
 
-    # =================================================
-    # ПОЧАТОК
-    # =================================================
+    # ========================================================
+    # ФІЛЬТРАЦІЯ
+    # ========================================================
 
-    text = (
-        "🛰 <b>СТАН БЕЗПЕКИ</b>\n\n"
-        f"📍 <b>{city}</b>\n\n"
+    nearby = find_nearby_threats(
+        user_id,
+        threats,
     )
 
-    # =================================================
-    # МОЯ ЛОКАЦІЯ
-    # =================================================
-
-    text += (
-        "🚨 <b>МОЯ ЛОКАЦІЯ</b>\n"
+    print(
+        f"⚠️ Загроз поблизу "
+        f"{location_name}: {len(nearby)}"
     )
 
-    if city_alert:
+    # ========================================================
+    # ПОВІДОМЛЕННЯ
+    # ========================================================
 
-        text += (
-            "🔴 Повітряна тривога: "
-            "<b>АКТИВНА</b>\n\n"
-        )
-
-    else:
-
-        text += (
-            "🟢 Повітряної тривоги "
-            "<b>НЕМАЄ</b>\n\n"
-        )
-
-    # =================================================
-    # ОБЛАСТЬ
-    # =================================================
-
-    if city_oblast:
-
-        text += (
-            f"🗺 <b>{city_oblast.upper()}</b>\n"
-        )
-
-        if active_oblast_raions:
-
-            text += (
-                "🟡 У частині області "
-                "<b>АКТИВНА ТРИВОГА</b>\n\n"
-            )
-
-            text += (
-                "📍 <b>Активні райони:</b>\n"
-            )
-
-            for item in active_oblast_raions:
-
-                name = item.get(
-                    "name",
-                    "Невідомий район"
-                )
-
-                text += (
-                    f"• {name}\n"
-                )
-
-            text += "\n"
-
-        else:
-
-            text += (
-                "🟢 Активної тривоги "
-                "в області не виявлено.\n\n"
-            )
-
-    # =================================================
-    # КОНКРЕТНІ ЗАГРОЗИ
-    # =================================================
-
-    text += (
-        "📡 <b>КОНКРЕТНІ ЗАГРОЗИ ПОБЛИЗУ</b>\n"
+    text = build_threat_message(
+        location,
+        nearby,
     )
-
-    if nearby_threats:
-
-        text += "\n"
-
-        for item in nearby_threats:
-
-            text += (
-                format_threat(item)
-                +
-                "\n\n"
-            )
-
-        text = text.rstrip()
-
-    else:
-
-        text += (
-            "🟢 Конкретних активних "
-            "загроз у радіусі "
-            f"{THREAT_RADIUS_KM} км "
-            "не виявлено."
-        )
-
-    # =================================================
-    # ПОЯСНЕННЯ
-    # =================================================
-
-    if (
-        not city_alert
-        and active_oblast_raions
-    ):
-
-        text += (
-            "\n\n"
-            "ℹ️ <b>Важливо:</b> "
-            "тривога в іншому районі області "
-            "не означає автоматично тривогу "
-            f"в місті {city}."
-        )
-
-    # =================================================
-    # ЯКЩО ТРИВОГА САМЕ В МОЄМУ РАЙОНІ
-    # =================================================
-
-    if city_alert:
-
-        city_raion = CITY_RAIONS.get(
-            city
-        )
-
-        if city_raion:
-
-            text += (
-                "\n\n"
-                f"🔴 <b>{city_raion}</b>: "
-                "повітряна тривога активна."
-            )
-
-        text += (
-            "\n\n"
-            "⚠️ <b>Перебувайте "
-            "в безпечному місці.</b>"
-        )
-
-    elif nearby_threats:
-
-        text += (
-            "\n\n"
-            "🟡 <b>Поблизу є конкретна "
-            "активна загроза.</b>\n"
-            "Слідкуйте за офіційними "
-            "повідомленнями."
-        )
-
-    else:
-
-        text += (
-            "\n\n"
-            "🛡 <b>Залишайтеся уважними.</b>"
-        )
-
-    # =================================================
-    # ВІДПРАВКА
-    # =================================================
 
     await message.answer(
         text,
         parse_mode="HTML"
-    )
-
-    print(
-        f"✅ THREATS | "
-        f"city={city} | "
-        f"city_alert={city_alert} | "
-        f"oblast_raions={len(active_oblast_raions)} | "
-        f"nearby={len(nearby_threats)}"
     )

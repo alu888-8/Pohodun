@@ -4,22 +4,23 @@ from aiogram.types import (
 )
 
 
-def oblasts_keyboard(oblasts):
-
+def _make_keyboard(
+    items,
+    prefix,
+    back_text="⬅️ Назад",
+):
     keyboard = []
-
     row = []
 
-    for oblast in oblasts:
+    for item in items:
 
         button = KeyboardButton(
-            text=f"🗺 {oblast['name']}"
+            text=f"{prefix} {item['name']}"
         )
 
         row.append(button)
 
         if len(row) == 2:
-
             keyboard.append(row)
             row = []
 
@@ -29,7 +30,7 @@ def oblasts_keyboard(oblasts):
     keyboard.append(
         [
             KeyboardButton(
-                text="⬅️ Назад"
+                text=back_text
             )
         ]
     )
@@ -40,22 +41,44 @@ def oblasts_keyboard(oblasts):
     )
 
 
-def raions_keyboard(
+# =====================================================
+# ОБЛАСТІ
+# =====================================================
+
+def oblasts_keyboard(oblasts):
+
+    return _make_keyboard(
+        oblasts,
+        "🗺",
+        "⬅️ Назад",
+    )
+
+
+# =====================================================
+# ЛОКАЦІЇ ОБЛАСТІ
+# МІСТА + РАЙОНИ
+# =====================================================
+
+def locations_keyboard(
+    cities,
     raions,
-    oblast_name
 ):
 
     keyboard = []
 
+    # -------------------------------------------------
+    # МІСТА
+    # -------------------------------------------------
+
     row = []
 
-    for raion in raions:
+    for city in cities:
 
-        button = KeyboardButton(
-            text=f"📍 {raion['name']}"
+        row.append(
+            KeyboardButton(
+                text=f"🏙 {city['name']}"
+            )
         )
-
-        row.append(button)
 
         if len(row) == 2:
 
@@ -64,6 +87,32 @@ def raions_keyboard(
 
     if row:
         keyboard.append(row)
+
+    # -------------------------------------------------
+    # РАЙОНИ
+    # -------------------------------------------------
+
+    row = []
+
+    for raion in raions:
+
+        row.append(
+            KeyboardButton(
+                text=f"📍 {raion['name']}"
+            )
+        )
+
+        if len(row) == 2:
+
+            keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.append(row)
+
+    # -------------------------------------------------
+    # НАЗАД
+    # -------------------------------------------------
 
     keyboard.append(
         [
@@ -83,5 +132,83 @@ def raions_keyboard(
 
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
+        resize_keyboard=True,
+    )
+
+
+# =====================================================
+# СТАРІ ФУНКЦІЇ
+# =====================================================
+
+def raions_keyboard(raions):
+
+    return _make_keyboard(
+        raions,
+        "📍",
+        "🔙 До областей",
+    )
+
+
+def cities_keyboard(cities):
+
+    return _make_keyboard(
+        cities,
+        "🏙",
+        "🔙 До районів",
+    )
+
+
+# =====================================================
+# ПОШУК
+# =====================================================
+
+def location_search_keyboard():
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="🔎 Пошук населеного пункту"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="🗺 Обрати область"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="⬅️ Назад"
+                )
+            ],
+        ],
+        resize_keyboard=True,
+    )
+
+
+# =====================================================
+# ПІДТВЕРДЖЕННЯ
+# =====================================================
+
+def confirm_location_keyboard():
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="✅ Моніторити цю локацію"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="🔄 Обрати іншу"
+                )
+            ],
+            [
+                KeyboardButton(
+                    text="⬅️ Назад"
+                )
+            ],
+        ],
         resize_keyboard=True,
     )
