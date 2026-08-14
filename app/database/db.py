@@ -4,19 +4,71 @@ import sqlite3
 DB_NAME = "app/database/users.db"
 
 
+def get_connection():
+    return sqlite3.connect(DB_NAME)
+
+
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+
+    conn = get_connection()
     cursor = conn.cursor()
 
-    # Користувачі
+    # =====================================================
+    # КОРИСТУВАЧІ
+    # =====================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
-            city TEXT NOT NULL DEFAULT 'Київ'
+
+            city TEXT NOT NULL DEFAULT 'Київ',
+
+            location_key TEXT,
+
+            location_name TEXT,
+
+            location_oblast TEXT
         )
     """)
 
-    # Контент дня окремо для кожного міста
+    # =====================================================
+    # МІГРАЦІЯ СТАРОЇ БАЗИ
+    # =====================================================
+
+    cursor.execute(
+        "PRAGMA table_info(users)"
+    )
+
+    columns = {
+        row[1]
+        for row in cursor.fetchall()
+    }
+
+    if "location_key" not in columns:
+
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN location_key TEXT
+        """)
+
+    if "location_name" not in columns:
+
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN location_name TEXT
+        """)
+
+    if "location_oblast" not in columns:
+
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN location_oblast TEXT
+        """)
+
+    # =====================================================
+    # КОНТЕНТ ДНЯ
+    # =====================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS daily_content_city (
             city TEXT PRIMARY KEY,
@@ -30,25 +82,35 @@ def init_db():
     conn.close()
 
 
+# =====================================================
+# МІСТО
+# =====================================================
+
 def get_city(user_id):
-    conn = sqlite3.connect(DB_NAME)
+
+    conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT city FROM users WHERE telegram_id=?",
-        (user_id,)
-    )
+    cursor.execute("""
+        SELECT city
+        FROM users
+        WHERE telegram_id=?
+    """, (user_id,))
 
     row = cursor.fetchone()
 
     if row is None:
-        cursor.execute(
-            """
-            INSERT INTO users (telegram_id, city)
+
+        cursor.execute("""
+            INSERT INTO users (
+                telegram_id,
+                city
+            )
             VALUES (?, ?)
-            """,
-            (user_id, "Київ")
-        )
+        """, (
+            user_id,
+            "Київ"
+        ))
 
         conn.commit()
         conn.close()
@@ -60,26 +122,154 @@ def get_city(user_id):
     return row[0]
 
 
-def save_city(user_id, city):
-    conn = sqlite3.connect(DB_NAME)
+def save_city(
+    user_id,
+    city
+):
+
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO users (telegram_id, city)
+        INSERT INTO users (
+            telegram_id,
+            city
+        )
         VALUES (?, ?)
+
         ON CONFLICT(telegram_id)
-        DO UPDATE SET city=excluded.city
-    """, (user_id, city))
+        DO UPDATE SET
+            city=excluded.city
+    """, (
+        user_id,
+        city
+    ))
 
     conn.commit()
     conn.close()
 
 
-def get_users_count():
-    conn = sqlite3.connect(DB_NAME)
+# =====================================================
+# ЛОКАЦІЯ NEPTUN
+# =====================================================
+
+def get_location(user_id):
+
+    conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM users")
+    cursor.execute("""
+        SELECT
+            location_key,
+            location_name,
+            location_oblast
+        FROM users
+        WHERE telegram_id=?
+    """, (
+        user_id,
+    ))
+
+    row = cursor.fetchone()
+
+    conn.close()
+
+    if not row:
+
+        return None
+
+    if not row[0]:
+
+        return None
+
+    return {
+        "key": row[0],
+        "name": row[1],
+        "oblast": row[2],
+    }
+
+
+def save_location(
+    user_id,
+    location_key,
+    location_name,
+    location_oblast
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO users (
+            telegram_id,
+            city,
+            location_key,
+            location_name,
+            location_oblast
+        )
+        VALUES (
+            ?,
+            COALESCE(
+                (
+                    SELECT city
+                    FROM users
+                    WHERE telegram_id=?
+                ),
+                'Київ'
+            ),
+            ?,
+            ?,
+            ?
+        )
+
+        ON CONFLICT(telegram_id)
+        DO UPDATE SET
+            location_key=excluded.location_key,
+            location_name=excluded.location_name,
+            location_oblast=excluded.location_oblast
+    """, (
+        user_id,
+        user_id,
+        location_key,
+        location_name,
+        location_oblast
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def clear_location(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET
+            location_key=NULL,
+            location_name=NULL,
+            location_oblast=NULL
+        WHERE telegram_id=?
+    """, (
+        user_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =====================================================
+# КОРИСТУВАЧІ
+# =====================================================
+
+def get_users_count():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
 
     count = cursor.fetchone()[0]
 
@@ -89,15 +279,17 @@ def get_users_count():
 
 
 def get_all_users():
-    """
-    Повертає всіх користувачів та їхні міста.
-    """
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT telegram_id, city
+        SELECT
+            telegram_id,
+            city,
+            location_key,
+            location_name,
+            location_oblast
         FROM users
         ORDER BY telegram_id
     """)
@@ -109,33 +301,44 @@ def get_all_users():
     users = []
 
     for row in rows:
+
         users.append({
             "telegram_id": row[0],
-            "city": row[1]
+            "city": row[1],
+            "location_key": row[2],
+            "location_name": row[3],
+            "location_oblast": row[4],
         })
 
     return users
 
 
-def get_daily_content(city):
-    """
-    Отримує контент дня для конкретного міста.
-    """
+# =====================================================
+# КОНТЕНТ ДНЯ
+# =====================================================
 
-    conn = sqlite3.connect(DB_NAME)
+def get_daily_content(city):
+
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT content_date, joke, greeting
+        SELECT
+            content_date,
+            joke,
+            greeting
         FROM daily_content_city
         WHERE city=?
-    """, (city,))
+    """, (
+        city,
+    ))
 
     row = cursor.fetchone()
 
     conn.close()
 
     if row:
+
         return {
             "date": row[0],
             "joke": row[1],
@@ -145,13 +348,14 @@ def get_daily_content(city):
     return None
 
 
-def save_daily_content(city, content_date, joke, greeting):
-    """
-    Зберігає контент дня для конкретного міста.
-    Якщо для міста вже є запис — оновлює його.
-    """
+def save_daily_content(
+    city,
+    content_date,
+    joke,
+    greeting
+):
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""

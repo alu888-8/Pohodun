@@ -1,13 +1,26 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
+
 
 settings_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="🗺 Змінити місто"),
+            KeyboardButton(
+                text="🗺 Місто для погоди"
+            ),
         ],
         [
-            KeyboardButton(text="⬅️ Назад"),
+            KeyboardButton(
+                text="📍 Локація моніторингу"
+            ),
+        ],
+        [
+            KeyboardButton(
+                text="⬅️ Назад"
+            ),
         ],
     ],
-    resize_keyboard=True
+    resize_keyboard=True,
 )
