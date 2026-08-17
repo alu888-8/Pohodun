@@ -4,6 +4,10 @@ from aiogram.types import (
 )
 
 
+# =====================================================
+# УНІВЕРСАЛЬНА КЛАВІАТУРА
+# =====================================================
+
 def _make_keyboard(
     items,
     prefix,
@@ -13,7 +17,6 @@ def _make_keyboard(
     row = []
 
     for item in items:
-
         button = KeyboardButton(
             text=f"{prefix} {item['name']}"
         )
@@ -55,89 +58,7 @@ def oblasts_keyboard(oblasts):
 
 
 # =====================================================
-# ЛОКАЦІЇ ОБЛАСТІ
-# МІСТА + РАЙОНИ
-# =====================================================
-
-def locations_keyboard(
-    cities,
-    raions,
-):
-
-    keyboard = []
-
-    # -------------------------------------------------
-    # МІСТА
-    # -------------------------------------------------
-
-    row = []
-
-    for city in cities:
-
-        row.append(
-            KeyboardButton(
-                text=f"🏙 {city['name']}"
-            )
-        )
-
-        if len(row) == 2:
-
-            keyboard.append(row)
-            row = []
-
-    if row:
-        keyboard.append(row)
-
-    # -------------------------------------------------
-    # РАЙОНИ
-    # -------------------------------------------------
-
-    row = []
-
-    for raion in raions:
-
-        row.append(
-            KeyboardButton(
-                text=f"📍 {raion['name']}"
-            )
-        )
-
-        if len(row) == 2:
-
-            keyboard.append(row)
-            row = []
-
-    if row:
-        keyboard.append(row)
-
-    # -------------------------------------------------
-    # НАЗАД
-    # -------------------------------------------------
-
-    keyboard.append(
-        [
-            KeyboardButton(
-                text="🔙 До областей"
-            )
-        ]
-    )
-
-    keyboard.append(
-        [
-            KeyboardButton(
-                text="⬅️ Назад"
-            )
-        ]
-    )
-
-    return ReplyKeyboardMarkup(
-        keyboard=keyboard,
-        resize_keyboard=True,
-    )
-
-
-# =====================================================
-# СТАРІ ФУНКЦІЇ
+# РАЙОНИ
 # =====================================================
 
 def raions_keyboard(raions):
@@ -149,12 +70,44 @@ def raions_keyboard(raions):
     )
 
 
+# =====================================================
+# МІСТА
+# =====================================================
+
 def cities_keyboard(cities):
 
     return _make_keyboard(
         cities,
         "🏙",
-        "🔙 До районів",
+        "🔙 До областей",
+    )
+
+
+# =====================================================
+# МЕНЮ ВИБОРУ ЛОКАЦІЇ
+# =====================================================
+
+def monitoring_location_keyboard():
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="🏙 Обрати місто"
+                ),
+            ],
+            [
+                KeyboardButton(
+                    text="🗺 Обрати область"
+                ),
+            ],
+            [
+                KeyboardButton(
+                    text="⬅️ Назад"
+                ),
+            ],
+        ],
+        resize_keyboard=True,
     )
 
 
@@ -187,7 +140,7 @@ def location_search_keyboard():
 
 
 # =====================================================
-# ПІДТВЕРДЖЕННЯ
+# ПІДТВЕРДЖЕННЯ ЛОКАЦІЇ
 # =====================================================
 
 def confirm_location_keyboard():
