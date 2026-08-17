@@ -12,18 +12,19 @@ def _make_keyboard(
     items,
     prefix,
     back_text="⬅️ Назад",
+    columns=2,
 ):
     keyboard = []
     row = []
 
     for item in items:
-        button = KeyboardButton(
-            text=f"{prefix} {item['name']}"
+        row.append(
+            KeyboardButton(
+                text=f"{prefix} {item['name']}"
+            )
         )
 
-        row.append(button)
-
-        if len(row) == 2:
+        if len(row) == columns:
             keyboard.append(row)
             row = []
 
@@ -45,46 +46,7 @@ def _make_keyboard(
 
 
 # =====================================================
-# ОБЛАСТІ
-# =====================================================
-
-def oblasts_keyboard(oblasts):
-
-    return _make_keyboard(
-        oblasts,
-        "🗺",
-        "⬅️ Назад",
-    )
-
-
-# =====================================================
-# РАЙОНИ
-# =====================================================
-
-def raions_keyboard(raions):
-
-    return _make_keyboard(
-        raions,
-        "📍",
-        "🔙 До областей",
-    )
-
-
-# =====================================================
-# МІСТА
-# =====================================================
-
-def cities_keyboard(cities):
-
-    return _make_keyboard(
-        cities,
-        "🏙",
-        "🔙 До областей",
-    )
-
-
-# =====================================================
-# МЕНЮ ВИБОРУ ЛОКАЦІЇ
+# ГОЛОВНЕ МЕНЮ ЛОКАЦІЇ
 # =====================================================
 
 def monitoring_location_keyboard():
@@ -112,6 +74,59 @@ def monitoring_location_keyboard():
 
 
 # =====================================================
+# МІСТА
+# =====================================================
+
+def cities_keyboard(
+    cities,
+    back_text="⬅️ Назад",
+):
+    return _make_keyboard(
+        cities,
+        "🏙",
+        back_text,
+        columns=2,
+    )
+
+
+# =====================================================
+# ОБЛАСТІ
+# =====================================================
+
+def oblasts_keyboard(
+    oblasts,
+    back_text="⬅️ Назад",
+):
+    return _make_keyboard(
+        oblasts,
+        "🗺",
+        back_text,
+        columns=2,
+    )
+
+
+# =====================================================
+# РАЙОНИ
+# =====================================================
+
+def raions_keyboard(
+    raions,
+    oblast_name=None,
+):
+    """
+    oblast_name залишений для сумісності
+    зі старим settings.py.
+    """
+
+    return _make_keyboard(
+        raions,
+        "📍",
+        "🔙 До областей",
+        columns=2,
+    )
+
+
+# =====================================================
 # ПОШУК
 # =====================================================
 
@@ -123,6 +138,11 @@ def location_search_keyboard():
                 KeyboardButton(
                     text="🔎 Пошук населеного пункту"
                 )
+            ],
+            [
+                KeyboardButton(
+                    text="🏙 Обрати місто"
+                ),
             ],
             [
                 KeyboardButton(

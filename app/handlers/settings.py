@@ -16,8 +16,11 @@ from app.services.weather import get_weather
 from app.data.cities import CITY_API
 
 from app.keyboards.settings import settings_keyboard
-from app.keyboards.cities import cities_keyboard
+from app.keyboards.cities import cities_keyboard as weather_cities_keyboard
+
 from app.keyboards.locations import (
+    monitoring_location_keyboard,
+    cities_keyboard as monitoring_cities_keyboard,
     oblasts_keyboard,
     raions_keyboard,
 )
@@ -27,6 +30,7 @@ from app.keyboards.menu import get_main_menu
 from app.services.neptun_locations import (
     get_oblasts,
     get_raions_by_oblast,
+    get_city_locations,
 )
 
 
@@ -42,6 +46,7 @@ class CityState(StatesGroup):
 
 
 class LocationState(StatesGroup):
+    waiting_for_city = State()
     waiting_for_oblast = State()
     waiting_for_raion = State()
 
@@ -60,20 +65,31 @@ async def settings(
 
     user_id = message.from_user.id
 
-    city = get_city(
-        user_id
-    )
+    city = get_city(user_id)
 
-    location = get_location(
-        user_id
-    )
+    location = get_location(user_id)
 
     if location:
 
-        location_text = (
-            f"📍 <b>{location['name']}</b>\n"
-            f"🗺 {location['oblast']}"
+        location_name = location.get(
+            "name",
+            "Не вибрана"
         )
+
+        location_oblast = (
+            location.get("oblast")
+            or location.get("oblast_name")
+            or ""
+        )
+
+        location_text = (
+            f"📍 <b>{location_name}</b>"
+        )
+
+        if location_oblast:
+            location_text += (
+                f"\n🗺 {location_oblast}"
+            )
 
     else:
 
@@ -81,10 +97,12 @@ async def settings(
             "📍 <b>Не вибрана</b>"
         )
 
+    weather_city = city or "Не вибране"
+
     text = (
         "⚙️ <b>Налаштування</b>\n\n"
         f"🌤 Місто для погоди: "
-        f"<b>{city}</b>\n\n"
+        f"<b>{weather_city}</b>\n\n"
         "🛰 <b>Локація моніторингу:</b>\n"
         f"{location_text}"
     )
@@ -104,7 +122,7 @@ async def settings(
     lambda message:
     message.text == "🗺 Місто для погоди"
 )
-async def choose_city_menu(
+async def choose_weather_city_menu(
     message: Message,
     state: FSMContext
 ):
@@ -114,12 +132,12 @@ async def choose_city_menu(
     await message.answer(
         "🌤 <b>Оберіть місто для погоди:</b>",
         parse_mode="HTML",
-        reply_markup=cities_keyboard,
+        reply_markup=weather_cities_keyboard,
     )
 
 
 # =====================================================
-# ПОЧАТОК ВИБОРУ ЛОКАЦІЇ
+# ПОЧАТОК ВИБОРУ ЛОКАЦІЇ МОНІТОРИНГУ
 # =====================================================
 
 @router.message(
@@ -127,6 +145,178 @@ async def choose_city_menu(
     message.text == "📍 Локація моніторингу"
 )
 async def choose_monitoring_location(
+    message: Message,
+    state: FSMContext
+):
+
+    await state.clear()
+
+    await message.answer(
+        "📍 <b>Локація моніторингу</b>\n\n"
+        "Оберіть, що хочете моніторити:",
+        parse_mode="HTML",
+        reply_markup=monitoring_location_keyboard(),
+    )
+
+
+# =====================================================
+# ОБРАТИ МІСТО ДЛЯ МОНІТОРИНГУ
+# =====================================================
+
+@router.message(
+    lambda message:
+    message.text == "🏙 Обрати місто"
+)
+async def choose_monitoring_city(
+    message: Message,
+    state: FSMContext
+):
+
+    await state.clear()
+
+    try:
+
+        cities = await asyncio.to_thread(
+            get_city_locations
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ NEPTUN міста: {e}"
+        )
+
+        await message.answer(
+            "❌ Не вдалося отримати "
+            "список міст NEPTUN."
+        )
+
+        return
+
+    if not cities:
+
+        await message.answer(
+            "❌ Список міст порожній."
+        )
+
+        return
+
+    await state.set_state(
+        LocationState.waiting_for_city
+    )
+
+    await message.answer(
+        "🏙 <b>Оберіть місто для моніторингу:</b>",
+        parse_mode="HTML",
+        reply_markup=monitoring_cities_keyboard(
+            cities,
+            "⬅️ Назад",
+        ),
+    )
+
+
+# =====================================================
+# ВИБІР МІСТА ДЛЯ МОНІТОРИНГУ
+# =====================================================
+
+@router.message(
+    LocationState.waiting_for_city
+)
+async def select_monitoring_city(
+    message: Message,
+    state: FSMContext
+):
+
+    if message.text == "⬅️ Назад":
+
+        await state.clear()
+
+        await message.answer(
+            "📍 <b>Локація моніторингу</b>",
+            parse_mode="HTML",
+            reply_markup=monitoring_location_keyboard(),
+        )
+
+        return
+
+    if not message.text:
+
+        return
+
+    city_name = (
+        message.text
+        .replace("🏙", "")
+        .strip()
+    )
+
+    cities = await asyncio.to_thread(
+        get_city_locations
+    )
+
+    selected_city = None
+
+    for city in cities:
+
+        if (
+            city["name"].strip().lower()
+            == city_name.lower()
+        ):
+
+            selected_city = city
+            break
+
+    if not selected_city:
+
+        await message.answer(
+            "❌ Місто не знайдене."
+        )
+
+        return
+
+    user_id = message.from_user.id
+
+    # =================================================
+    # ЗБЕРІГАЄМО САМЕ МІСТО
+    # =================================================
+
+    save_location(
+        user_id,
+        selected_city["key"],
+        selected_city["name"],
+        selected_city.get("oblast_name") or "",
+    )
+
+    await state.clear()
+
+    oblast_name = (
+        selected_city.get("oblast_name")
+        or "—"
+    )
+
+    raion_name = (
+        selected_city.get("raion_name")
+        or "—"
+    )
+
+    await message.answer(
+        "✅ <b>Локацію моніторингу збережено</b>\n\n"
+        f"🏙 <b>{selected_city['name']}</b>\n"
+        f"🗺 {oblast_name}\n"
+        f"📍 {raion_name}",
+        parse_mode="HTML",
+        reply_markup=settings_keyboard,
+    )
+
+
+# =====================================================
+# ОБРАТИ ОБЛАСТЬ
+# =====================================================
+
+@router.message(
+    lambda message:
+    message.text == "🗺 Обрати область"
+)
+async def choose_monitoring_oblast(
     message: Message,
     state: FSMContext
 ):
@@ -152,6 +342,14 @@ async def choose_monitoring_location(
 
         return
 
+    if not oblasts:
+
+        await message.answer(
+            "❌ Список областей порожній."
+        )
+
+        return
+
     await state.set_state(
         LocationState.waiting_for_oblast
     )
@@ -160,7 +358,8 @@ async def choose_monitoring_location(
         "🗺 <b>Оберіть область:</b>",
         parse_mode="HTML",
         reply_markup=oblasts_keyboard(
-            oblasts
+            oblasts,
+            "⬅️ Назад",
         ),
     )
 
@@ -182,13 +381,15 @@ async def select_oblast(
         await state.clear()
 
         await message.answer(
-            "⚙️ Налаштування",
-            reply_markup=settings_keyboard,
+            "📍 <b>Локація моніторингу</b>",
+            parse_mode="HTML",
+            reply_markup=monitoring_location_keyboard(),
         )
 
         return
 
     if not message.text:
+
         return
 
     oblast_name = (
@@ -206,8 +407,8 @@ async def select_oblast(
     for oblast in oblasts:
 
         if (
-            oblast["name"]
-            == oblast_name
+            oblast["name"].strip().lower()
+            == oblast_name.lower()
         ):
 
             selected_oblast = oblast
@@ -245,12 +446,12 @@ async def select_oblast(
     )
 
     await message.answer(
-        f"📍 <b>{selected_oblast['name']}</b>\n\n"
+        f"🗺 <b>{selected_oblast['name']}</b>\n\n"
         "Оберіть район:",
         parse_mode="HTML",
         reply_markup=raions_keyboard(
             raions,
-            selected_oblast["name"]
+            selected_oblast["name"],
         ),
     )
 
@@ -281,7 +482,8 @@ async def select_raion(
             "🗺 <b>Оберіть область:</b>",
             parse_mode="HTML",
             reply_markup=oblasts_keyboard(
-                oblasts
+                oblasts,
+                "⬅️ Назад",
             ),
         )
 
@@ -292,13 +494,15 @@ async def select_raion(
         await state.clear()
 
         await message.answer(
-            "⚙️ Налаштування",
-            reply_markup=settings_keyboard,
+            "📍 <b>Локація моніторингу</b>",
+            parse_mode="HTML",
+            reply_markup=monitoring_location_keyboard(),
         )
 
         return
 
     if not message.text:
+
         return
 
     raion_name = (
@@ -338,8 +542,8 @@ async def select_raion(
     for raion in raions:
 
         if (
-            raion["name"]
-            == raion_name
+            raion["name"].strip().lower()
+            == raion_name.lower()
         ):
 
             selected_raion = raion
@@ -365,8 +569,7 @@ async def select_raion(
     await state.clear()
 
     await message.answer(
-        "✅ <b>Локацію моніторингу "
-        "збережено</b>\n\n"
+        "✅ <b>Локацію моніторингу збережено</b>\n\n"
         f"📍 {selected_raion['name']}\n"
         f"🗺 {oblast_name}",
         parse_mode="HTML",
@@ -406,17 +609,18 @@ async def back_to_menu(
     message.text
     and message.text.startswith("📍")
 )
-async def choose_city(
+async def choose_weather_city(
     message: Message,
     state: FSMContext
 ):
 
     current_state = await state.get_state()
 
-    # Під час вибору району цей handler
-    # не повинен обробляти кнопки району.
-    if current_state == (
-        LocationState.waiting_for_raion.state
+    # Під час вибору району/міста моніторингу
+    # цей handler не повинен перехоплювати кнопки.
+    if current_state in (
+        LocationState.waiting_for_city.state,
+        LocationState.waiting_for_raion.state,
     ):
 
         return
@@ -520,6 +724,7 @@ async def change_city(
         return
 
     city = message.text.strip()
+
     user_id = message.from_user.id
 
     weather = await asyncio.to_thread(
