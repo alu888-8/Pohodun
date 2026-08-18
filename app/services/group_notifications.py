@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sqlite3
 
 from datetime import datetime, timedelta
@@ -131,7 +132,7 @@ def get_users_locations():
 
                 seen.add(key)
 
-                locations.append({
+                location = {
                     "key": location_key,
                     "name": (
                         location_name
@@ -141,7 +142,62 @@ def get_users_locations():
                         location_oblast
                         or ""
                     ),
-                })
+                }
+
+                # Якщо це район — зберігаємо його дані,
+                # щоб монітор і пошук загроз працювали
+                # саме для вибраного району.
+                try:
+
+                    raion = find_raion(
+                        location_key
+                    )
+
+                    if raion:
+
+                        location["raion_key"] = (
+                            raion.get("key")
+                        )
+
+                        location["raion_name"] = (
+                            raion.get("name")
+                        )
+
+                        location["oblast_key"] = (
+                            raion.get("oblast_key")
+                        )
+
+                        location["oblast_name"] = (
+                            raion.get("oblast_name")
+                            or raion.get("oblast")
+                            or location_oblast
+                            or ""
+                        )
+
+                        location["latitude"] = (
+                            raion.get("latitude")
+                            or raion.get("lat")
+                            or raion.get("center_latitude")
+                            or raion.get("center_lat")
+                        )
+
+                        location["longitude"] = (
+                            raion.get("longitude")
+                            or raion.get("lon")
+                            or raion.get("center_longitude")
+                            or raion.get("center_lon")
+                        )
+
+                except Exception as e:
+
+                    print(
+                        f"⚠️ Neptun location lookup "
+                        f"{location_key}: {e}"
+                    )
+
+                locations.append(
+                    location
+                )
 
                 continue
 
@@ -180,6 +236,24 @@ def get_users_locations():
                         "oblast": (
                             city_location.get("oblast_name")
                             or ""
+                        ),
+                        "raion_key": city_location.get(
+                            "raion_key"
+                        ),
+                        "raion_name": city_location.get(
+                            "raion_name"
+                        ),
+                        "oblast_key": city_location.get(
+                            "oblast_key"
+                        ),
+                        "oblast_name": city_location.get(
+                            "oblast_name"
+                        ),
+                        "latitude": city_location.get(
+                            "latitude"
+                        ),
+                        "longitude": city_location.get(
+                            "longitude"
                         ),
                     }
 
@@ -253,6 +327,7 @@ def get_location_info(location):
         "київ",
         "kyiv",
     ):
+
         return {
             "type": "city",
             "key": "kyiv-city",
@@ -261,6 +336,8 @@ def get_location_info(location):
             "raion_name": None,
             "oblast_key": "kyiv-city",
             "oblast_name": "Київ",
+            "latitude": 50.4501,
+            "longitude": 30.5234,
         }
 
     # =================================================
@@ -275,6 +352,62 @@ def get_location_info(location):
         raion = None
 
     if raion:
+
+        latitude = (
+            raion.get("latitude")
+            or raion.get("lat")
+            or raion.get("center_latitude")
+            or raion.get("center_lat")
+        )
+
+        longitude = (
+            raion.get("longitude")
+            or raion.get("lon")
+            or raion.get("center_longitude")
+            or raion.get("center_lon")
+        )
+
+        # Якщо Neptun не має координат району,
+        # беремо координати головного міста району.
+        if (
+            latitude is None
+            or longitude is None
+        ):
+
+            raion_name = (
+                raion.get("name")
+                or location_name
+                or ""
+            )
+
+            city_name = re.sub(
+                r"\s+район$",
+                "",
+                str(raion_name),
+                flags=re.IGNORECASE,
+            ).strip()
+
+            if city_name:
+
+                try:
+
+                    city = find_city_location(
+                        city_name
+                    )
+
+                    if city:
+
+                        latitude = city.get(
+                            "latitude"
+                        )
+
+                        longitude = city.get(
+                            "longitude"
+                        )
+
+                except Exception:
+                    pass
+
         return {
             "type": "raion",
             "key": raion.get("key"),
@@ -285,7 +418,14 @@ def get_location_info(location):
             "raion_key": raion.get("key"),
             "raion_name": raion.get("name"),
             "oblast_key": raion.get("oblast_key"),
-            "oblast_name": raion.get("oblast_name"),
+            "oblast_name": (
+                raion.get("oblast_name")
+                or raion.get("oblast")
+                or location.get("oblast")
+                or ""
+            ),
+            "latitude": latitude,
+            "longitude": longitude,
         }
 
     # =================================================
@@ -300,6 +440,7 @@ def get_location_info(location):
         city = None
 
     if city:
+
         return {
             "type": "city",
             "key": city.get("key"),
@@ -327,6 +468,8 @@ def get_location_info(location):
             location.get("oblast")
             or ""
         ),
+        "latitude": location.get("latitude"),
+        "longitude": location.get("longitude"),
     }
 
 
@@ -524,28 +667,33 @@ def distance_km(
 def get_location_coordinates(
     location,
 ):
+    """
+    Отримує координати локації.
+
+    Для району:
+    1. Беремо координати з location.
+    2. Шукаємо район через Neptun.
+    3. Якщо координат району немає —
+       беремо центр міста, назва якого відповідає району.
+
+    Для міста:
+    1. location.
+    2. Neptun.
+    3. CITY_API.
+    """
+
     if not location:
         return None, None
 
-    latitude = location.get(
-        "latitude"
-    )
-
-    longitude = location.get(
-        "longitude"
-    )
+    latitude = location.get("latitude")
+    longitude = location.get("longitude")
 
     if latitude is None:
-        latitude = location.get(
-            "lat"
-        )
+        latitude = location.get("lat")
 
     if longitude is None:
-        longitude = location.get(
-            "lon"
-        )
+        longitude = location.get("lon")
 
-    # Координати вже є
     if (
         latitude is not None
         and longitude is not None
@@ -561,42 +709,173 @@ def get_location_coordinates(
         ):
             pass
 
-    name = (
+    location_key = normalize(
+        location.get("key")
+    )
+
+    location_name = (
         location.get("name")
         or ""
     )
 
-    if not name:
-        return None, None
+    # =================================================
+    # РАЙОН
+    # =================================================
 
-    try:
-        city = find_city_location(
-            name
-        )
+    if location_key:
 
-        if city:
-            latitude = city.get(
-                "latitude"
+        try:
+
+            raion = find_raion(
+                location_key
             )
 
-            longitude = city.get(
-                "longitude"
+        except Exception as e:
+
+            print(
+                f"⚠️ Neptun raion coordinates error "
+                f"{location_name}: {e}"
+            )
+
+            raion = None
+
+        if raion:
+
+            latitude = (
+                raion.get("latitude")
+                or raion.get("lat")
+                or raion.get("center_latitude")
+                or raion.get("center_lat")
+            )
+
+            longitude = (
+                raion.get("longitude")
+                or raion.get("lon")
+                or raion.get("center_longitude")
+                or raion.get("center_lon")
             )
 
             if (
                 latitude is not None
                 and longitude is not None
             ):
-                return (
-                    float(latitude),
-                    float(longitude),
+
+                try:
+
+                    print(
+                        f"📍 RAION COORDINATES | "
+                        f"{location_name} | "
+                        f"{latitude}, {longitude}"
+                    )
+
+                    return (
+                        float(latitude),
+                        float(longitude),
+                    )
+
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    pass
+
+            # -----------------------------------------
+            # Центр району через головне місто
+            # -----------------------------------------
+
+            raion_name = (
+                raion.get("name")
+                or location_name
+                or ""
+            )
+
+            city_name = re.sub(
+                r"\s+район$",
+                "",
+                str(raion_name),
+                flags=re.IGNORECASE,
+            ).strip()
+
+            if city_name:
+
+                try:
+
+                    city = find_city_location(
+                        city_name
+                    )
+
+                    if city:
+
+                        latitude = city.get(
+                            "latitude"
+                        )
+
+                        longitude = city.get(
+                            "longitude"
+                        )
+
+                        if (
+                            latitude is not None
+                            and longitude is not None
+                        ):
+
+                            print(
+                                f"📍 RAION CENTER | "
+                                f"{location_name} → "
+                                f"{city_name} | "
+                                f"{latitude}, {longitude}"
+                            )
+
+                            return (
+                                float(latitude),
+                                float(longitude),
+                            )
+
+                except Exception as e:
+
+                    print(
+                        f"⚠️ Neptun district center error "
+                        f"{city_name}: {e}"
+                    )
+
+    # =================================================
+    # МІСТО
+    # =================================================
+
+    if location_name:
+
+        try:
+
+            city = find_city_location(
+                location_name
+            )
+
+            if city:
+
+                latitude = city.get(
+                    "latitude"
                 )
 
-    except Exception as e:
-        print(
-            f"⚠️ Помилка отримання "
-            f"координат {name}: {e}"
-        )
+                longitude = city.get(
+                    "longitude"
+                )
+
+                if (
+                    latitude is not None
+                    and longitude is not None
+                ):
+
+                    return (
+                        float(latitude),
+                        float(longitude),
+                    )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Neptun coordinates error "
+                f"{location_name}: {e}"
+            )
 
     return None, None
 
