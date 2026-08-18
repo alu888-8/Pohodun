@@ -30,6 +30,8 @@ KYIV_TIMEZONE = ZoneInfo("Europe/Kyiv")
 
 CHECK_INTERVAL = 10
 
+THREAT_RADIUS_KM = 70
+
 
 # =====================================================
 # СТАН ТРИВОГ
@@ -46,34 +48,45 @@ async def send_to_group(
     bot: Bot,
     text: str,
 ):
-
     try:
-
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text=text,
             parse_mode="HTML",
         )
 
-        print(
-            "✅ Повідомлення відправлено в групу"
-        )
+        print("✅ Повідомлення відправлено в групу")
 
     except Exception as e:
+        print(f"❌ Помилка відправки в групу: {e}")
 
-        print(
-            f"❌ Помилка відправки в групу: {e}"
-        )
+
+# =====================================================
+# НОРМАЛІЗАЦІЯ
+# =====================================================
+
+def normalize(value):
+    if value is None:
+        return ""
+
+    return str(value).strip().lower()
 
 
 # =====================================================
 # ЛОКАЦІЇ ДЛЯ МОНІТОРИНГУ
+#
+# Нові записи:
+#   location_key / location_name / location_oblast
+#
+# Старі записи:
+#   city
+#
+# Якщо нової локації немає, використовуємо city
+# і шукаємо місто через Neptun.
 # =====================================================
 
 def get_users_locations():
-
     try:
-
         conn = sqlite3.connect(
             "app/database/users.db"
         )
@@ -81,46 +94,124 @@ def get_users_locations():
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT DISTINCT
+            SELECT
+                telegram_id,
+                city,
                 location_key,
                 location_name,
                 location_oblast
             FROM users
-            WHERE location_key IS NOT NULL
-              AND location_key != ''
         """)
 
         rows = cursor.fetchall()
-
         conn.close()
 
         locations = []
+        seen = set()
 
         for row in rows:
+            telegram_id = row[0]
+            legacy_city = row[1]
+            location_key = row[2]
+            location_name = row[3]
+            location_oblast = row[4]
 
-            location_key = row[0]
-            location_name = row[1]
-            location_oblast = row[2]
+            # =================================================
+            # НОВА ЛОКАЦІЯ
+            # =================================================
 
-            if not location_key:
+            if location_key:
+                key = normalize(location_key)
+
+                if not key:
+                    continue
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+
+                locations.append({
+                    "key": location_key,
+                    "name": (
+                        location_name
+                        or location_key
+                    ),
+                    "oblast": (
+                        location_oblast
+                        or ""
+                    ),
+                })
+
                 continue
 
-            locations.append({
-                "key": location_key,
-                "name": (
-                    location_name
-                    or location_key
-                ),
-                "oblast": (
-                    location_oblast
-                    or ""
-                ),
-            })
+            # =================================================
+            # СТАРИЙ ФОРМАТ — МІСТО
+            # =================================================
+
+            if legacy_city:
+                try:
+                    city_location = find_city_location(
+                        legacy_city
+                    )
+                except Exception as e:
+                    print(
+                        f"⚠️ Neptun legacy lookup "
+                        f"{legacy_city}: {e}"
+                    )
+                    city_location = None
+
+                if city_location:
+                    key = normalize(
+                        city_location.get("key")
+                    )
+
+                    if not key or key in seen:
+                        continue
+
+                    seen.add(key)
+
+                    location = {
+                        "key": city_location.get("key"),
+                        "name": (
+                            city_location.get("name")
+                            or legacy_city
+                        ),
+                        "oblast": (
+                            city_location.get("oblast_name")
+                            or ""
+                        ),
+                    }
+
+                    locations.append(location)
+
+                    print(
+                        f"📍 LEGACY LOCATION | "
+                        f"user={telegram_id} | "
+                        f"{legacy_city} → {location['key']}"
+                    )
+
+                else:
+                    print(
+                        f"⚠️ Не знайдено місто "
+                        f"через Neptun: {legacy_city}"
+                    )
+
+        print(
+            f"📡 Локацій для моніторингу: "
+            f"{len(locations)}"
+        )
+
+        for location in locations:
+            print(
+                f"   📍 {location['name']} "
+                f"→ {location['key']} "
+                f"({location['oblast']})"
+            )
 
         return locations
 
     except Exception as e:
-
         print(
             f"❌ Помилка отримання локацій: {e}"
         )
@@ -133,47 +224,7 @@ def get_users_locations():
 # =====================================================
 
 def get_users_cities():
-
     return get_users_locations()
-
-
-# =====================================================
-# НОРМАЛІЗАЦІЯ
-# =====================================================
-
-def normalize(value):
-
-    if value is None:
-        return ""
-
-    return (
-        str(value)
-        .strip()
-        .lower()
-    )
-
-
-# =====================================================
-# ІКОНКА ЗАГРОЗИ
-# =====================================================
-
-def get_threat_icon(
-    threat_type,
-):
-
-    return {
-        "uav": "🛸",
-        "missile": "🚀",
-        "ballistic": "💥",
-        "kab": "💣",
-        "mig31k": "✈️",
-        "recon": "👀",
-        "fpv": "🛸",
-        "unknown": "❓",
-    }.get(
-        normalize(threat_type),
-        "❓",
-    )
 
 
 # =====================================================
@@ -181,7 +232,6 @@ def get_threat_icon(
 # =====================================================
 
 def get_location_info(location):
-
     if not location:
         return None
 
@@ -194,9 +244,15 @@ def get_location_info(location):
         or ""
     )
 
-    # Київ
-    if location_key == "kyiv-city":
+    # =================================================
+    # КИЇВ
+    # =================================================
 
+    if location_key in (
+        "kyiv-city",
+        "київ",
+        "kyiv",
+    ):
         return {
             "type": "city",
             "key": "kyiv-city",
@@ -207,19 +263,18 @@ def get_location_info(location):
             "oblast_name": "Київ",
         }
 
-    # Район
-    try:
+    # =================================================
+    # РАЙОН
+    # =================================================
 
+    try:
         raion = find_raion(
             location_key
         )
-
     except Exception:
-
         raion = None
 
     if raion:
-
         return {
             "type": "raion",
             "key": raion.get("key"),
@@ -233,19 +288,18 @@ def get_location_info(location):
             "oblast_name": raion.get("oblast_name"),
         }
 
-    # Місто
-    try:
+    # =================================================
+    # МІСТО
+    # =================================================
 
+    try:
         city = find_city_location(
             location_name
         )
-
     except Exception:
-
         city = None
 
     if city:
-
         return {
             "type": "city",
             "key": city.get("key"),
@@ -258,6 +312,10 @@ def get_location_info(location):
             "longitude": city.get("longitude"),
         }
 
+    # =================================================
+    # НЕВІДОМА ЛОКАЦІЯ
+    # =================================================
+
     return {
         "type": "unknown",
         "key": location_key,
@@ -265,19 +323,30 @@ def get_location_info(location):
         "raion_key": None,
         "raion_name": None,
         "oblast_key": None,
-        "oblast_name": location.get("oblast"),
+        "oblast_name": (
+            location.get("oblast")
+            or ""
+        ),
     }
 
 
 # =====================================================
 # ПЕРЕВІРКА ТРИВОГИ
+#
+# Для міста:
+#   перевіряємо саме його район.
+#
+# Для району:
+#   перевіряємо саме цей район.
+#
+# Область сама по собі НЕ робить тривогу
+# в конкретному місті активною.
 # =====================================================
 
 def is_location_alert_active(
     location,
     data,
 ):
-
     if not data:
         return False
 
@@ -298,14 +367,12 @@ def is_location_alert_active(
         []
     )
 
-    # -------------------------------------------------
+    # =================================================
     # КИЇВ
-    # -------------------------------------------------
+    # =================================================
 
     if info["key"] == "kyiv-city":
-
         for item in raions + oblasts:
-
             key = normalize(
                 item.get("key")
             )
@@ -316,6 +383,7 @@ def is_location_alert_active(
 
             if key in (
                 "kyiv",
+                "kyiv-city",
                 "м. київ",
                 "місто київ",
             ):
@@ -330,40 +398,221 @@ def is_location_alert_active(
 
         return False
 
-    # -------------------------------------------------
+    # =================================================
     # КОНКРЕТНИЙ РАЙОН
-    # -------------------------------------------------
+    # =================================================
 
-    target_raion = normalize(
+    target_raion_key = normalize(
         info.get("raion_key")
     )
 
-    if target_raion:
+    target_raion_name = normalize(
+        info.get("raion_name")
+    )
 
+    if target_raion_key:
         for item in raions:
-
             item_key = normalize(
                 item.get("key")
             )
 
-            if item_key == target_raion:
+            item_name = normalize(
+                item.get("name")
+            )
 
+            if item_key == target_raion_key:
+                return True
+
+            if (
+                target_raion_name
+                and item_name == target_raion_name
+            ):
                 return True
 
         return False
+
+    # =================================================
+    # ЯКЩО NEPTUN НЕ ДАВ РАЙОН
+    #
+    # Перевіряємо точний населений пункт.
+    # Область автоматично не вважаємо тривогою.
+    # =================================================
+
+    target_city = normalize(
+        info.get("name")
+    )
+
+    for item in raions + oblasts:
+        item_key = normalize(
+            item.get("key")
+        )
+
+        item_name = normalize(
+            item.get("name")
+        )
+
+        if target_city and (
+            item_key == target_city
+            or item_name == target_city
+        ):
+            return True
 
     return False
 
 
 # =====================================================
-# ЗАГРОЗИ ДЛЯ ПРИЧИНИ ТРИВОГИ
+# ВІДСТАНЬ
+# =====================================================
+
+def distance_km(
+    lat1,
+    lon1,
+    lat2,
+    lon2,
+):
+    from math import (
+        radians,
+        sin,
+        cos,
+        asin,
+        sqrt,
+    )
+
+    try:
+        lat1 = float(lat1)
+        lon1 = float(lon1)
+        lat2 = float(lat2)
+        lon2 = float(lon2)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    earth_radius = 6371.0
+
+    dlat = radians(
+        lat2 - lat1
+    )
+
+    dlon = radians(
+        lon2 - lon1
+    )
+
+    a = (
+        sin(dlat / 2) ** 2
+        +
+        cos(radians(lat1))
+        * cos(radians(lat2))
+        * sin(dlon / 2) ** 2
+    )
+
+    return (
+        2
+        * earth_radius
+        * asin(
+            sqrt(a)
+        )
+    )
+
+
+# =====================================================
+# КООРДИНАТИ ЛОКАЦІЇ
+# =====================================================
+
+def get_location_coordinates(
+    location,
+):
+    if not location:
+        return None, None
+
+    latitude = location.get(
+        "latitude"
+    )
+
+    longitude = location.get(
+        "longitude"
+    )
+
+    if latitude is None:
+        latitude = location.get(
+            "lat"
+        )
+
+    if longitude is None:
+        longitude = location.get(
+            "lon"
+        )
+
+    # Координати вже є
+    if (
+        latitude is not None
+        and longitude is not None
+    ):
+        try:
+            return (
+                float(latitude),
+                float(longitude),
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    name = (
+        location.get("name")
+        or ""
+    )
+
+    if not name:
+        return None, None
+
+    try:
+        city = find_city_location(
+            name
+        )
+
+        if city:
+            latitude = city.get(
+                "latitude"
+            )
+
+            longitude = city.get(
+                "longitude"
+            )
+
+            if (
+                latitude is not None
+                and longitude is not None
+            ):
+                return (
+                    float(latitude),
+                    float(longitude),
+                )
+
+    except Exception as e:
+        print(
+            f"⚠️ Помилка отримання "
+            f"координат {name}: {e}"
+        )
+
+    return None, None
+
+
+# =====================================================
+# ЗАГРОЗИ ПОБЛИЗУ ЛОКАЦІЇ
+#
+# Реальні дані Threats API
+# + координати Neptun
+# + радіус 70 км
 # =====================================================
 
 def get_location_threats(
     location,
     data,
 ):
-
     if not data:
         return []
 
@@ -375,82 +624,182 @@ def get_location_threats(
     if not threats:
         return []
 
-    info = get_location_info(
-        location
+    latitude, longitude = (
+        get_location_coordinates(
+            location
+        )
     )
 
-    if not info:
+    if (
+        latitude is None
+        or longitude is None
+    ):
+        print(
+            f"⚠️ Немає координат для "
+            f"{location.get('name')}"
+        )
+
         return []
+
+    print(
+        f"📍 ALERT THREAT LOCATION | "
+        f"{location.get('name')} | "
+        f"{latitude}, {longitude}"
+    )
 
     result = []
 
-    target_raion = normalize(
-        info.get("raion_name")
-    )
-
-    target_city = normalize(
-        info.get("name")
-    )
-
     for threat in threats:
+        if not isinstance(
+            threat,
+            dict,
+        ):
+            continue
 
         status = normalize(
             threat.get("status")
         )
 
         if status not in (
-            "",
             "active",
+            "activated",
+            "stale",
         ):
             continue
 
-        district = normalize(
-            threat.get("district")
+        threat_lat = threat.get(
+            "latitude"
         )
 
-        locality = normalize(
-            threat.get("locality")
+        if threat_lat is None:
+            threat_lat = threat.get(
+                "lat"
+            )
+
+        threat_lon = threat.get(
+            "longitude"
         )
 
-        # Точний район
-        if (
-            target_raion
-            and target_raion in district
-        ):
-
-            result.append(
-                threat
+        if threat_lon is None:
+            threat_lon = threat.get(
+                "lon"
             )
 
+        if (
+            threat_lat is None
+            or threat_lon is None
+        ):
             continue
 
-        # Точний населений пункт
-        if (
-            target_city
-            and locality
-            and locality == target_city
-        ):
-
-            result.append(
-                threat
+        try:
+            threat_lat = float(
+                threat_lat
             )
 
+            threat_lon = float(
+                threat_lon
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
             continue
 
-        # Київ
-        if info["key"] == "kyiv-city":
+        distance = distance_km(
+            latitude,
+            longitude,
+            threat_lat,
+            threat_lon,
+        )
 
-            if locality in (
-                "київ",
-                "м. київ",
-                "місто київ",
-            ):
+        if distance is None:
+            continue
 
-                result.append(
-                    threat
-                )
+        if distance > THREAT_RADIUS_KM:
+            continue
 
-    return result
+        threat_copy = dict(
+            threat
+        )
+
+        threat_copy[
+            "_distance_km"
+        ] = distance
+
+        result.append(
+            threat_copy
+        )
+
+        print(
+            f"🎯 THREAT NEAR "
+            f"{location.get('name')}: "
+            f"{threat.get('title')} | "
+            f"{threat.get('locality')} | "
+            f"{distance:.1f} км"
+        )
+
+    result.sort(
+        key=lambda item: item.get(
+            "_distance_km",
+            999999,
+        )
+    )
+
+    unique = []
+    seen = set()
+
+    for threat in result:
+        threat_id = (
+            threat.get("id")
+            or (
+                threat.get("title"),
+                threat.get("locality"),
+                threat.get("lat"),
+                threat.get("lon"),
+            )
+        )
+
+        if threat_id in seen:
+            continue
+
+        seen.add(
+            threat_id
+        )
+
+        unique.append(
+            threat
+        )
+
+    print(
+        f"📡 Загроз поблизу "
+        f"{location.get('name')}: "
+        f"{len(unique)}"
+    )
+
+    return unique
+
+
+# =====================================================
+# ІКОНКА ЗАГРОЗИ
+# =====================================================
+
+def get_threat_icon(
+    threat_type,
+):
+    return {
+        "uav": "🛸",
+        "missile": "🚀",
+        "ballistic": "💥",
+        "kab": "💣",
+        "mig31k": "✈️",
+        "recon": "👀",
+        "fpv": "🛸",
+        "unknown": "❓",
+    }.get(
+        normalize(threat_type),
+        "❓",
+    )
 
 
 # =====================================================
@@ -461,7 +810,6 @@ def format_alert_start(
     location,
     threats,
 ):
-
     name = (
         location.get("name")
         or "Невідома локація"
@@ -469,22 +817,27 @@ def format_alert_start(
 
     text = (
         "🚨 <b>ПОВІТРЯНА ТРИВОГА</b>\n\n"
-        f"📍 <b>{name.upper()}</b>\n\n"
+        f"📍 <b>{name.upper()}</b>\n"
     )
 
     if threats:
-
-        text += (
-            "⚠️ <b>Причина:</b>\n"
-        )
+        text += "\n⚠️ <b>Конкретні загрози поблизу:</b>\n"
 
         seen = set()
 
         for threat in threats:
-
             title = (
                 threat.get("title")
                 or "Невідома загроза"
+            )
+
+            locality = (
+                threat.get("locality")
+                or ""
+            )
+
+            distance = threat.get(
+                "_distance_km"
             )
 
             explanation = (
@@ -495,7 +848,13 @@ def format_alert_start(
             )
 
             unique_key = (
-                f"{title}|{explanation}"
+                threat.get("id")
+                or (
+                    title,
+                    locality,
+                    threat.get("lat"),
+                    threat.get("lon"),
+                )
             )
 
             if unique_key in seen:
@@ -513,20 +872,34 @@ def format_alert_start(
                 f"{icon} <b>{title}</b>"
             )
 
-            if explanation:
-
+            if locality:
                 text += (
-                    f" — {explanation}"
+                    f" — {locality}"
+                )
+
+            if distance is not None:
+                text += (
+                    f" ({distance:.1f} км)"
+                )
+
+            if explanation:
+                text += (
+                    f"\n   {explanation}"
                 )
 
             text += "\n"
 
     else:
-
         text += (
-            "⚠️ Причина уточнюється.\n"
-            "Негайно перейдіть у безпечне місце."
+            "\n⚠️ <b>Конкретна загроза "
+            "поблизу не визначена.</b>\n"
+            "Тривога підтверджена даними Alerts API.\n"
         )
+
+    text += (
+        "\n🛡 <b>Негайно перейдіть "
+        "у безпечне місце.</b>"
+    )
 
     return text
 
@@ -538,7 +911,6 @@ def format_alert_start(
 def format_alert_end(
     location,
 ):
-
     name = (
         location.get("name")
         or "Невідома локація"
@@ -554,33 +926,39 @@ def format_alert_end(
 # =====================================================
 # МОНІТОР ТРИВОГ
 #
-# ПОЧАТОК → 1 повідомлення
-# ТРИВАЄ → НІЧОГО
-# НОВА ЗАГРОЗА → НІЧОГО
-# ЗМІНА ЗАГРОЗИ → НІЧОГО
-# ВІДБІЙ → 1 повідомлення
+# ПЕРШИЙ ЗАПУСК:
+#   стан запам'ятовується без повідомлення.
 #
-# АВТОМАТИЧНИХ ПОВІДОМЛЕНЬ
-# ПРО ЗАГРОЗИ НЕМАЄ.
+# ПОЧАТОК:
+#   False → True = 1 повідомлення.
+#
+# ТРИВАЄ:
+#   True → True = нічого.
+#
+# ВІДБІЙ:
+#   True → False = 1 повідомлення.
+#
+# НОВА ЗАГРОЗА ПІД ЧАС ТРИВОГИ:
+#   не надсилаємо окремого повідомлення.
 # =====================================================
 
 async def group_alert_monitor(
     bot: Bot,
 ):
-
     print(
         "🚨 Моніторинг тривог запущений"
     )
 
     while True:
-
         try:
-
             locations = await asyncio.to_thread(
                 get_users_locations
             )
 
             if not locations:
+                print(
+                    "📡 Немає локацій для моніторингу"
+                )
 
                 await asyncio.sleep(
                     CHECK_INTERVAL
@@ -593,6 +971,9 @@ async def group_alert_monitor(
             )
 
             if not alerts_data:
+                print(
+                    "⚠️ API тривог не повернув дані"
+                )
 
                 await asyncio.sleep(
                     CHECK_INTERVAL
@@ -600,10 +981,18 @@ async def group_alert_monitor(
 
                 continue
 
-            for location in locations:
+            current_keys = set()
 
-                location_key = (
-                    location["key"]
+            for location in locations:
+                location_key = normalize(
+                    location.get("key")
+                )
+
+                if not location_key:
+                    continue
+
+                current_keys.add(
+                    location_key
                 )
 
                 alert_active = (
@@ -619,33 +1008,38 @@ async def group_alert_monitor(
                     )
                 )
 
-                # =====================================
+                print(
+                    f"📡 ALERT CHECK | "
+                    f"{location.get('name')} | "
+                    f"active={alert_active} | "
+                    f"previous={previous_state}"
+                )
+
+                # =================================================
                 # ПЕРШИЙ ЗАПУСК
-                # =====================================
+                # =================================================
 
                 if previous_state is None:
-
                     _last_alert_states[
                         location_key
                     ] = alert_active
 
                     print(
                         f"📡 Початковий стан "
-                        f"{location['name']}: "
+                        f"{location.get('name')}: "
                         f"тривога={alert_active}"
                     )
 
                     continue
 
-                # =====================================
-                # ПОЧАТОК
-                # =====================================
+                # =================================================
+                # ПОЧАТОК ТРИВОГИ
+                # =================================================
 
                 if (
                     alert_active
                     and not previous_state
                 ):
-
                     threats_data = (
                         await asyncio.to_thread(
                             get_threats
@@ -674,19 +1068,18 @@ async def group_alert_monitor(
                     ] = True
 
                     print(
-                        f"🚨 Почалася тривога: "
-                        f"{location['name']}"
+                        f"🚨 ПОЧАЛАСЯ ТРИВОГА: "
+                        f"{location.get('name')}"
                     )
 
-                # =====================================
+                # =================================================
                 # ВІДБІЙ
-                # =====================================
+                # =================================================
 
                 elif (
                     not alert_active
                     and previous_state
                 ):
-
                     await send_to_group(
                         bot,
                         format_alert_end(
@@ -699,12 +1092,32 @@ async def group_alert_monitor(
                     ] = False
 
                     print(
-                        f"🟢 Відбій: "
-                        f"{location['name']}"
+                        f"🟢 ВІДБІЙ: "
+                        f"{location.get('name')}"
                     )
 
-        except Exception as e:
+                # =================================================
+                # СТАН НЕ ЗМІНИВСЯ
+                # =================================================
 
+                else:
+                    _last_alert_states[
+                        location_key
+                    ] = alert_active
+
+            # =================================================
+            # ВИДАЛЯЄМО СТАРІ ЛОКАЦІЇ
+            # =================================================
+
+            for key in list(
+                _last_alert_states.keys()
+            ):
+                if key not in current_keys:
+                    del _last_alert_states[
+                        key
+                    ]
+
+        except Exception as e:
             print(
                 f"❌ Помилка моніторингу: {e}"
             )
@@ -719,16 +1132,13 @@ async def group_alert_monitor(
 # =====================================================
 
 def get_morning_joke():
-
     try:
-
         joke = ai_joke.get_joke()
 
         if joke:
             return joke
 
     except Exception as e:
-
         print(
             f"❌ Помилка отримання жарту: {e}"
         )
@@ -747,13 +1157,11 @@ def get_morning_joke():
 async def send_morning_weather(
     bot: Bot,
 ):
-
     print(
         "🌅 Формування ранкової погоди..."
     )
 
     try:
-
         conn = sqlite3.connect(
             "app/database/users.db"
         )
@@ -778,26 +1186,20 @@ async def send_morning_weather(
         ]
 
         if not cities:
-
             print(
                 "ℹ️ Немає міст для ранкової погоди"
             )
-
             return
 
         sent_cities = set()
 
         for city in cities:
-
             if city in sent_cities:
                 continue
 
-            sent_cities.add(
-                city
-            )
+            sent_cities.add(city)
 
             try:
-
                 weather = await asyncio.to_thread(
                     get_weather,
                     city,
@@ -809,20 +1211,17 @@ async def send_morning_weather(
                 advice = ""
 
                 try:
-
                     advice_result = get_advice(
                         weather
                     )
 
                     if advice_result:
-
                         advice = (
                             f"\n\n💡 "
                             f"{advice_result}"
                         )
 
                 except Exception as e:
-
                     print(
                         f"⚠️ Помилка поради: {e}"
                     )
@@ -852,19 +1251,15 @@ async def send_morning_weather(
                     text,
                 )
 
-                await asyncio.sleep(
-                    1
-                )
+                await asyncio.sleep(1)
 
             except Exception as e:
-
                 print(
                     f"❌ Помилка погоди "
                     f"{city}: {e}"
                 )
 
     except Exception as e:
-
         print(
             f"❌ Помилка ранкової погоди: {e}"
         )
@@ -877,15 +1272,12 @@ async def send_morning_weather(
 async def morning_weather_scheduler(
     bot: Bot,
 ):
-
     print(
         "🌅 Планувальник ранкової погоди запущений"
     )
 
     while True:
-
         try:
-
             now = datetime.now(
                 KYIV_TIMEZONE
             )
@@ -898,7 +1290,6 @@ async def morning_weather_scheduler(
             )
 
             if next_run <= now:
-
                 next_run += timedelta(
                     days=1
                 )
@@ -921,15 +1312,12 @@ async def morning_weather_scheduler(
             )
 
         except asyncio.CancelledError:
-
             print(
                 "🌅 Планувальник ранкової погоди зупинений"
             )
-
             raise
 
         except Exception as e:
-
             print(
                 f"❌ Помилка планувальника: {e}"
             )

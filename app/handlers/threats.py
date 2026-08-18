@@ -505,103 +505,154 @@ def get_active_oblast_raions(
 # =====================================================
 
 def find_nearby_threats(
-    city,
+    location,
     threats_data
 ):
+    """
+    Повертає конкретні активні загрози в радіусі THREAT_RADIUS_KM
+    від вибраної локації моніторингу.
+
+    Координати беруться саме з location, а якщо їх немає —
+    додатково шукаються через Neptun.
+    API загроз підтримує як lat/lon, так і latitude/longitude.
+    """
 
     result = []
 
-    if not threats_data:
+    if not threats_data or not location:
         return result
 
-    city_coordinates = (
-        get_city_coordinates(city)
+    # =================================================
+    # КООРДИНАТИ ВИБРАНОЇ ЛОКАЦІЇ
+    # =================================================
+
+    latitude = (
+        location.get("latitude")
+        if location.get("latitude") is not None
+        else location.get("lat")
     )
+
+    longitude = (
+        location.get("longitude")
+        if location.get("longitude") is not None
+        else location.get("lon")
+    )
+
+    # Якщо координат у location немає — пробуємо Neptun
+    if latitude is None or longitude is None:
+        city = location.get("name")
+
+        if city:
+            try:
+                neptun_location = find_city_location(city)
+
+                if neptun_location:
+                    latitude = (
+                        neptun_location.get("latitude")
+                        if neptun_location.get("latitude") is not None
+                        else neptun_location.get("lat")
+                    )
+
+                    longitude = (
+                        neptun_location.get("longitude")
+                        if neptun_location.get("longitude") is not None
+                        else neptun_location.get("lon")
+                    )
+
+            except Exception as e:
+                print(
+                    f"⚠️ Neptun coordinates lookup failed: {e}"
+                )
+
+    if latitude is None or longitude is None:
+        print(
+            f"❌ Немає координат вибраної локації: {location}"
+        )
+        return result
+
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError):
+        print(
+            f"❌ Некоректні координати локації: "
+            f"{latitude}, {longitude}"
+        )
+        return result
+
+    print(
+        f"📍 THREAT LOCATION | "
+        f"{location.get('name')} | "
+        f"{latitude}, {longitude}"
+    )
+
+    # =================================================
+    # ПЕРЕВІРЯЄМО ВСІ ЗАГРОЗИ
+    # =================================================
 
     for threat in threats_data:
 
-        status = (
-            threat.get(
-                "status",
-                "active"
-            )
-            or "active"
-        ).lower()
+        if not isinstance(threat, dict):
+            continue
+
+        status = str(
+            threat.get("status", "active")
+        ).strip().lower()
 
         if status not in (
             "active",
-            "stale"
+            "activated",
+            "stale",
         ):
-
             continue
 
-        threat_lat = threat.get(
-            "lat"
+        # API може повертати lat/lon
+        # або latitude/longitude
+        threat_lat = (
+            threat.get("latitude")
+            if threat.get("latitude") is not None
+            else threat.get("lat")
         )
 
-        threat_lon = threat.get(
-            "lon"
+        threat_lon = (
+            threat.get("longitude")
+            if threat.get("longitude") is not None
+            else threat.get("lon")
         )
 
-        distance = None
+        if threat_lat is None or threat_lon is None:
+            continue
 
-        # =================================================
-        # КООРДИНАТИ Є
-        # =================================================
+        try:
+            threat_lat = float(threat_lat)
+            threat_lon = float(threat_lon)
+        except (TypeError, ValueError):
+            continue
 
-        if (
-            city_coordinates
-            and threat_lat is not None
-            and threat_lon is not None
-        ):
+        distance = distance_km(
+            latitude,
+            longitude,
+            threat_lat,
+            threat_lon,
+        )
 
-            distance = distance_km(
-                city_coordinates[0],
-                city_coordinates[1],
-                threat_lat,
-                threat_lon
-            )
+        if distance is None:
+            continue
 
-            if distance is None:
-                continue
-
-            if distance > THREAT_RADIUS_KM:
-                continue
-
-        # =================================================
-        # КООРДИНАТ НЕМАЄ
-        # =================================================
-
-        else:
-
-            keywords = CITY_REGIONS.get(
-                city,
-                [city.lower()]
-            )
-
-            search_text = (
-                f"{threat.get('region', '')} "
-                f"{threat.get('district', '')} "
-                f"{threat.get('locality', '')} "
-                f"{threat.get('title', '')} "
-                f"{threat.get('explanationShort', '')}"
-            ).lower()
-
-            found = any(
-                keyword.lower()
-                in search_text
-                for keyword in keywords
-            )
-
-            if not found:
-                continue
+        if distance > THREAT_RADIUS_KM:
+            continue
 
         result.append(
             {
                 "threat": threat,
-                "distance": distance
+                "distance": distance,
             }
         )
+
+    # Найближчі загрози показуємо першими
+    result.sort(
+        key=lambda item: item["distance"]
+    )
 
     return result
 
@@ -772,7 +823,10 @@ async def threats(message: Message):
     )
 
     threats_data = threats_api.get("threats", []) if threats_api else []
-    nearby_threats = find_nearby_threats(city, threats_data)
+    nearby_threats = find_nearby_threats(
+        location,
+        threats_data
+    )
 
     print(
         f"🛰 STATUS | city={city} | city_alert={city_alert} | "
@@ -843,4 +897,4 @@ async def threats(message: Message):
     print(
         f"✅ THREATS | city={city} | city_alert={city_alert} | "
         f"oblast_raions={len(active_oblast_raions)} | nearby={len(nearby_threats)}"
-    )
+)
