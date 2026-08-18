@@ -1,7 +1,9 @@
 import random
+import re
 from datetime import datetime
 from functools import lru_cache
 from html import escape
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -293,89 +295,146 @@ def _get_weather_records(
 # 🎂 НАРОДЖЕНІ
 # =====================================================
 
+@lru_cache(maxsize=256)
+def _get_person_description(title):
+    """
+    Отримує короткий опис людини з української Вікіпедії.
+    Якщо description недоступний — пробуємо перше речення extract.
+    """
+
+    if not title:
+        return ""
+
+    try:
+        page_title = title.replace(" ", "_")
+        encoded_title = quote(page_title, safe="")
+
+        url = (
+            "https://uk.wikipedia.org/api/rest_v1/page/summary/"
+            f"{encoded_title}"
+        )
+
+        response = requests.get(
+            url,
+            headers={
+                "User-Agent": "Pohodun/1.0"
+            },
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+            print(
+                f"⚠️ Wikipedia person {title}: "
+                f"HTTP {response.status_code}"
+            )
+            return ""
+
+        data = response.json()
+
+        description = _clean_text(
+            data.get("description", "")
+        )
+
+        if description:
+            return description[:220]
+
+        extract = _clean_text(
+            data.get("extract", "")
+        )
+
+        if not extract:
+            return ""
+
+        first_sentence = re.split(
+            r"(?<=[.!?])\s+",
+            extract,
+            maxsplit=1,
+        )[0].strip()
+
+        return first_sentence[:220]
+
+    except Exception as e:
+        print(
+            f"⚠️ Помилка опису людини "
+            f"{title}: {e}"
+        )
+        return ""
+
+
 def _format_people(
     items,
-    limit=4
+    limit=4,
 ):
+    """
+    Формує до limit людей.
+    Для кожного показує:
+    - ім'я;
+    - рік народження;
+    - коротко хто це.
+    """
 
     result = []
+    people_count = 0
 
     for item in items:
 
-        year = item.get(
-            "year"
-        )
+        if people_count >= limit:
+            break
 
-        text = item.get(
-            "text",
-            ""
-        )
-
-        pages = (
-            item.get("pages")
-            or []
-        )
-
+        year = item.get("year")
+        pages = item.get("pages") or []
         title = ""
 
         if pages:
-
             title = (
-                pages[0].get(
-                    "normalizedtitle"
-                )
-                or
-                pages[0].get(
-                    "title"
-                )
-                or
-                ""
+                pages[0].get("normalizedtitle")
+                or pages[0].get("title")
+                or ""
             )
 
-        title = _clean_text(
-            title
-        )
+        title = _clean_text(title)
 
         if title.isdigit():
             continue
 
         if not title:
-
             text_clean = _clean_text(
-                text
+                item.get("text", "")
             )
 
             if text_clean:
-
                 result.append(
                     f"• {escape(text_clean[:180], quote=False)}"
                 )
-
-            if len(result) >= limit:
-                break
+                people_count += 1
 
             continue
 
-        title = escape(
+        description = _get_person_description(
+            title
+        )
+
+        safe_title = escape(
             title,
-            quote=False
+            quote=False,
         )
 
         if year:
-
             result.append(
-                f"• <b>{title}</b> — "
-                f"{year} р."
+                f"• <b>{safe_title}</b> — {year} р."
             )
-
         else:
-
             result.append(
-                f"• <b>{title}</b>"
+                f"• <b>{safe_title}</b>"
             )
 
-        if len(result) >= limit:
-            break
+        if description:
+            result.append(
+                "  👤 "
+                f"{escape(description, quote=False)}"
+            )
+
+        people_count += 1
 
     return result
 
@@ -694,43 +753,124 @@ def _format_events(
 JOKES = [
 
     (
-        "— Офіціанте, у вас є щось від спеки?\n"
-        "— Так. Рахунок."
+        "— Лікарю, у мене проблема з пам'яттю.\n"
+        "— Давно?\n"
+        "— Що давно?"
     ),
 
     (
-        "— Чому ти знову запізнився на роботу?\n"
-        "— Погода була чудова, не хотілося її залишати."
+        "— Ти чому такий сумний?\n"
+        "— Зарплату отримав.\n"
+        "— І що?\n"
+        "— Тепер знаю, за що я так багато працюю."
     ),
 
     (
-        "Кажуть, понеділок важкий день. "
-        "Але п'ятниця доводить, що тиждень таки можна пережити 😄"
+        "— Як у тебе справи?\n"
+        "— Стабільно.\n"
+        "— Це добре?\n"
+        "— Ні. Стабільно немає грошей."
     ),
 
     (
-        "— Ти сьогодні рано встав?\n"
-        "— Ні, це я просто ще не ліг."
+        "Доросле життя — це коли відкриваєш холодильник "
+        "не тому, що голодний, а раптом там з'явилося щось нове."
     ),
 
     (
-        "План на сьогодні: зробити все.\n"
-        "Реальність: зробити каву і подумати про все."
+        "— У тебе є план на майбутнє?\n"
+        "— Є.\n"
+        "— Який?\n"
+        "— Не панікувати.\n"
+        "— І як?\n"
+        "— План поки не працює."
     ),
 
     (
-        "Синоптики обіцяють мінливу погоду.\n"
-        "А я стабільно не знаю, що вдягнути."
+        "Найстрашніші слова дорослої людини:\n"
+        "«Треба серйозно поговорити».\n"
+        "Особливо коли ти сам ще не знаєш, про що."
     ),
 
     (
-        "Найточніший прогноз погоди — "
-        "подивитися у вікно і все одно взяти куртку."
+        "— Чому ти не відповідав на телефон?\n"
+        "— Я був зайнятий.\n"
+        "— Чим?\n"
+        "— Дивився на телефон і думав, відповідати чи ні."
     ),
 
     (
-        "— Як пройшов твій день?\n"
-        "— Як погода: наче нормально, але краще не питати."
+        "Мій організм о 23:00: «Треба спати».\n"
+        "Мій мозок о 02:37: «А пам'ятаєш той крінж із 2014 року?»"
+    ),
+
+    (
+        "— Ти економиш гроші?\n"
+        "— Так.\n"
+        "— Як?\n"
+        "— Дивлюся на ціни й нічого не купую."
+    ),
+
+    (
+        "Чорний гумор — це коли життя підкидає тобі лимони, "
+        "а ти питаєш: «А сіль є? Бо текіла теж закінчилася»."
+    ),
+
+    (
+        "— У мене нерви як канати.\n"
+        "— Міцні?\n"
+        "— Ні. Вже давно на межі."
+    ),
+
+    (
+        "Кажуть: «Не відкладай на завтра те, що можеш зробити сьогодні».\n"
+        "Мудрі люди просто не знали про післязавтра."
+    ),
+
+    (
+        "— Ти виспався?\n"
+        "— Ні.\n"
+        "— А чому не ліг раніше?\n"
+        "— Хотів трохи пожити перед сном."
+    ),
+
+    (
+        "Життя — це коли купив щось зі знижкою 50%, "
+        "а потім три дні думаєш, чи треба було взагалі це купувати."
+    ),
+
+    (
+        "— У тебе стрес?\n"
+        "— Ні.\n"
+        "— А чому око сіпається?\n"
+        "— Воно просто теж працює."
+    ),
+
+    (
+        "Мій фінансовий план на місяць:\n"
+        "1. Не витрачати зайвого.\n"
+        "2. Побачити щось зі знижкою.\n"
+        "3. Забути пункт перший."
+    ),
+
+    (
+        "Іноді хочеться просто втекти від усіх проблем.\n"
+        "А потім згадуєш, що проблеми теж поїдуть за тобою."
+    ),
+
+    (
+        "— Як настрій?\n"
+        "— Як Wi-Fi у підвалі: наче є, але користі нуль."
+    ),
+
+    (
+        "Дорослість — це коли слово «відпочинок» "
+        "викликає думку: «А хто за це заплатить?»"
+    ),
+
+    (
+        "— Чому ти мовчиш?\n"
+        "— Економлю слова. Раптом до зарплати не вистачить."
     ),
 
 ]
