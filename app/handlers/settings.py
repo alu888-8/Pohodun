@@ -263,6 +263,7 @@ async def select_monitoring_city(
         ):
 
             selected_city = city
+
             break
 
     if not selected_city:
@@ -412,6 +413,7 @@ async def select_oblast(
         ):
 
             selected_oblast = oblast
+
             break
 
     if not selected_oblast:
@@ -547,6 +549,7 @@ async def select_raion(
         ):
 
             selected_raion = raion
+
             break
 
     if not selected_raion:
@@ -595,7 +598,8 @@ async def back_to_menu(
     await message.answer(
         "🏠 Головне меню",
         reply_markup=get_main_menu(
-            message.from_user.id
+            message.from_user.id,
+            message.chat.type,
         ),
     )
 
@@ -618,6 +622,7 @@ async def choose_weather_city(
 
     # Під час вибору району/міста моніторингу
     # цей handler не повинен перехоплювати кнопки.
+
     if current_state in (
         LocationState.waiting_for_city.state,
         LocationState.waiting_for_raion.state,
