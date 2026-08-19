@@ -999,9 +999,110 @@ def get_city_oblast(
 # ФОРМУВАННЯ ЗАГРОЗИ
 # =====================================================
 
+THREAT_TYPE_NAMES = {
+    "uav": "БпЛА",
+    "missile": "ракета",
+    "ballistic": "балістика",
+    "kab": "КАБ",
+    "mig31k": "МіГ-31К",
+    "recon": "розвідувальна загроза",
+    "fpv": "FPV-дрон",
+    "unknown": "невідома загроза",
+}
+
+
+def get_threat_type_name(
+    threat,
+):
+    """
+    Перетворює type з Threats API
+    у нормальну українську назву.
+
+    Нічого не вигадуємо:
+    беремо саме поле type.
+    """
+
+    threat_type = normalize(
+        threat.get("type")
+    )
+
+    return THREAT_TYPE_NAMES.get(
+        threat_type,
+        threat.get("title")
+        or "невідома загроза",
+    )
+
+
+def get_heading_text(
+    heading,
+):
+    """
+    Перетворює курс у градусах
+    на зрозумілий напрямок.
+
+    Наприклад:
+        0   → північ
+        90  → схід
+        180 → південь
+        270 → захід
+    """
+
+    if heading is None:
+        return ""
+
+    try:
+        value = float(
+            heading
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(
+            heading
+        ).strip()
+
+    value %= 360
+
+    directions = (
+        "північ",
+        "північний схід",
+        "схід",
+        "південний схід",
+        "південь",
+        "південний захід",
+        "захід",
+        "північний захід",
+    )
+
+    index = int(
+        (value + 22.5) // 45
+    ) % 8
+
+    return (
+        f"{directions[index]} "
+        f"({value:.0f}°)"
+    )
+
+
 def format_threat(
     item,
 ):
+    """
+    Формує одну актуальну загрозу.
+
+    ВАЖЛИВО:
+    Тип загрози показуємо явно:
+        Загроза: БпЛА
+        Загроза: балістика
+        Загроза: ракета
+        Загроза: КАБ
+        тощо.
+
+    Додаткові дані показуємо тільки якщо
+    вони реально є у Threats API.
+    """
 
     threat = item.get(
         "threat",
@@ -1012,9 +1113,21 @@ def format_threat(
         "distance"
     )
 
-    title = (
-        threat.get("title")
-        or "Невідома загроза"
+    threat_type = normalize(
+        threat.get("type")
+    )
+
+    type_name = get_threat_type_name(
+        threat
+    )
+
+    icon = get_threat_icon(
+        threat_type
+    )
+
+    locality = (
+        threat.get("locality")
+        or ""
     )
 
     region = (
@@ -1022,8 +1135,8 @@ def format_threat(
         or ""
     )
 
-    locality = (
-        threat.get("locality")
+    district = (
+        threat.get("district")
         or ""
     )
 
@@ -1032,37 +1145,141 @@ def format_threat(
         or 0
     )
 
+    heading = get_heading_text(
+        threat.get("heading")
+    )
+
+    destination = threat.get(
+        "destination"
+    )
+
+    presumptive_course = threat.get(
+        "presumptiveCourse"
+    )
+
+    uncertainty = threat.get(
+        "uncertaintyKm"
+    )
+
+    confidence = (
+        threat.get("confidenceLevel")
+        or threat.get("displayConfidence")
+        or ""
+    )
+
+    updated_at = (
+        threat.get("updatedAt")
+        or ""
+    )
+
+    explanation = (
+        threat.get("explanationShort")
+        or ""
+    )
+
     text = (
-        f"🛸 <b>{title}</b>\n"
+        f"{icon} <b>Загроза: "
+        f"{type_name}</b>\n"
     )
 
     if locality:
-
         text += (
             f"📍 {locality}\n"
         )
 
-    if region:
+    if district:
+        text += (
+            f"🏙 {district}\n"
+        )
 
+    if region:
         text += (
             f"🗺 {region}\n"
         )
 
     if distance is not None:
-
         text += (
             f"📏 Відстань: "
             f"<b>{distance:.0f} км</b>\n"
         )
 
-    if source_count:
-
+    if heading:
         text += (
-            f"🔎 Підтверджень: "
-            f"<b>{source_count}</b>"
+            f"🧭 Курс: "
+            f"<b>{heading}</b>\n"
         )
 
-    return text
+    if destination:
+        if locality:
+            text += (
+                "🎯 Визначено напрямок/ціль "
+                f"на <b>{locality}</b>\n"
+            )
+        else:
+            text += (
+                "🎯 Визначено напрямок/ціль\n"
+            )
+
+    elif presumptive_course:
+        text += (
+            "🧭 Курс визначений "
+            "орієнтовно\n"
+        )
+
+    if source_count:
+        text += (
+            f"🔎 Підтверджень: "
+            f"<b>{source_count}</b>\n"
+        )
+
+    if confidence:
+        confidence_names = {
+            "high": "висока",
+            "medium": "середня",
+            "low": "низька",
+        }
+
+        confidence_text = (
+            confidence_names.get(
+                normalize(confidence),
+                str(confidence),
+            )
+        )
+
+        text += (
+            f"📊 Достовірність: "
+            f"<b>{confidence_text}</b>\n"
+        )
+
+    if uncertainty is not None:
+        try:
+            uncertainty_value = float(
+                uncertainty
+            )
+
+            text += (
+                f"🎯 Похибка позиції: "
+                f"≈ {uncertainty_value:.1f} км\n"
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    if explanation:
+        text += (
+            f"ℹ️ {explanation}\n"
+        )
+
+    if updated_at:
+        text += (
+            f"🕒 Оновлено: "
+            f"<code>{updated_at}</code>"
+        )
+
+    return text.rstrip()
 
 
 # =====================================================
