@@ -1,3 +1,4 @@
+cat > app/keyboards/menu.py <<'PY'
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -41,6 +42,11 @@ def get_main_menu(
         ],
         [
             KeyboardButton(
+                text="🤖 Поговорити з Pohodun"
+            ),
+        ],
+        [
+            KeyboardButton(
                 text="⚙️ Налаштування"
             ),
         ],
@@ -49,10 +55,8 @@ def get_main_menu(
     # =====================================================
     # АДМІНКА
     #
-    # Тільки адміністратор
-    # Тільки в особистому чаті з ботом
-    #
-    # У групі / супергрупі кнопки немає
+    # Тільки для ADMIN_ID
+    # Тільки в особистому чаті
     # =====================================================
 
     if (
@@ -72,3 +76,4 @@ def get_main_menu(
         keyboard=keyboard,
         resize_keyboard=True,
     )
+PY

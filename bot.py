@@ -1,3 +1,4 @@
+cat > bot.py <<'PY'
 import asyncio
 
 from aiogram import Bot, Dispatcher
@@ -17,29 +18,33 @@ from app.handlers.advice import router as advice_router
 from app.handlers.users import router as users_router
 from app.handlers.settings import router as settings_router
 from app.handlers.admin import router as admin_router
+from app.handlers.ai_chat import router as ai_chat_router
 
 from app.services.group_notifications import (
     group_alert_monitor,
-    morning_weather_scheduler
+    morning_weather_scheduler,
 )
 
 
-# ID Telegram-групи
+# =====================================================
+# ID TELEGRAM-ГРУПИ
+# =====================================================
+
 GROUP_CHAT_ID = -493936504
 
 
 async def main():
 
-    # =========================
+    # =====================================================
     # БАЗА ДАНИХ
-    # =========================
+    # =====================================================
 
     init_db()
 
 
-    # =========================
+    # =====================================================
     # BOT
-    # =========================
+    # =====================================================
 
     bot = Bot(
         token=BOT_TOKEN
@@ -48,34 +53,80 @@ async def main():
     dp = Dispatcher()
 
 
-    # =========================
+    # =====================================================
     # РОУТЕРИ
-    # =========================
+    # =====================================================
 
-    dp.include_router(start_router)
-    dp.include_router(weather_router)
-    dp.include_router(forecast_router)
-    dp.include_router(day_facts_router)
-    dp.include_router(air_quality_router)
-    dp.include_router(alerts_router)
-    dp.include_router(threats_router)
-    dp.include_router(advice_router)
-    dp.include_router(users_router)
-    dp.include_router(settings_router)
-    dp.include_router(admin_router)
+    dp.include_router(
+        start_router
+    )
 
+    dp.include_router(
+        weather_router
+    )
+
+    dp.include_router(
+        forecast_router
+    )
+
+    dp.include_router(
+        day_facts_router
+    )
+
+    dp.include_router(
+        air_quality_router
+    )
+
+    dp.include_router(
+        alerts_router
+    )
+
+    dp.include_router(
+        threats_router
+    )
+
+    dp.include_router(
+        advice_router
+    )
+
+    dp.include_router(
+        users_router
+    )
+
+    dp.include_router(
+        settings_router
+    )
+
+    dp.include_router(
+        admin_router
+    )
+
+    # =====================================================
+    # AI CHAT
+    # =====================================================
+
+    dp.include_router(
+        ai_chat_router
+    )
+
+
+    # =====================================================
+    # ЗАПУСК
+    # =====================================================
 
     print(
         "✅ Pohodun запущений"
     )
 
 
-    # =========================
+    # =====================================================
     # МОНІТОРИНГ ТРИВОГ
-    # =========================
+    # =====================================================
 
     asyncio.create_task(
-        group_alert_monitor(bot)
+        group_alert_monitor(
+            bot
+        )
     )
 
     print(
@@ -84,12 +135,14 @@ async def main():
     )
 
 
-    # =========================
-    # РАНКОВА ПОГОДА 08:00
-    # =========================
+    # =====================================================
+    # РАНКОВА РОЗСИЛКА
+    # =====================================================
 
     asyncio.create_task(
-        morning_weather_scheduler(bot)
+        morning_weather_scheduler(
+            bot
+        )
     )
 
     print(
@@ -98,17 +151,22 @@ async def main():
     )
 
 
-    # =========================
-    # ЗАПУСК БОТА
-    # =========================
+    # =====================================================
+    # ЗАПУСК POLLING
+    # =====================================================
 
     await dp.start_polling(
         bot
     )
 
 
+# =====================================================
+# START
+# =====================================================
+
 if __name__ == "__main__":
 
     asyncio.run(
         main()
     )
+PY
