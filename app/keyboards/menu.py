@@ -14,48 +14,24 @@ def get_main_menu(
 
     keyboard = [
         [
-            KeyboardButton(
-                text="🌤 Погода зараз"
-            ),
+            KeyboardButton(text="🌤 Погода зараз"),
+            KeyboardButton(text="📅 Прогноз"),
         ],
         [
-            KeyboardButton(
-                text="📅 Прогноз"
-            ),
-            KeyboardButton(
-                text="🚨 Тривоги"
-            ),
+            KeyboardButton(text="🚨 Тривоги"),
+            KeyboardButton(text="🛰 Загрози"),
         ],
         [
-            KeyboardButton(
-                text="🛰 Загрози"
-            ),
-            KeyboardButton(
-                text="🌫 Якість повітря"
-            ),
+            KeyboardButton(text="🌫 Якість повітря"),
+            KeyboardButton(text="📣 Є що сказати"),
         ],
         [
-            KeyboardButton(
-                text="📣 Є що сказати"
-            ),
-        ],
-        [
-            KeyboardButton(
-                text="🤖 Поговорити з Pohodun"
-            ),
-        ],
-        [
-            KeyboardButton(
-                text="⚙️ Налаштування"
-            ),
+            KeyboardButton(text="🤖 Поговорити з Pohodun"),
+            KeyboardButton(text="⚙️ Налаштування"),
         ],
     ]
 
-    # =====================================================
-    # АДМІНКА
-    # Тільки ADMIN_ID і тільки особистий чат
-    # =====================================================
-
+    # Адмінка тільки в особистому чаті
     if (
         user_id == ADMIN_ID
         and chat_type == "private"
@@ -64,7 +40,7 @@ def get_main_menu(
             [
                 KeyboardButton(
                     text="🔧 Адмінка"
-                ),
+                )
             ]
         )
 
