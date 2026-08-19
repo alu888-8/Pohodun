@@ -11,7 +11,7 @@ router = Router()
 
 
 @router.message(
-    lambda message: message.text == "👕 Актуально"
+    lambda message: message.text == "📣 Є що сказати"
 )
 async def day_facts(message: Message):
 
