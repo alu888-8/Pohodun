@@ -7,11 +7,28 @@ OPENROUTER_URL = (
     "https://openrouter.ai/api/v1/chat/completions"
 )
 
-# Конкретна безкоштовна модель.
-# Не використовуємо openrouter/free,
-# бо він випадково вибирає різні моделі.
-MODEL = "openai/gpt-oss-20b:free"
 
+# =====================================================
+# МОДЕЛІ
+# =====================================================
+#
+# Перша — автоматичний вибір доступної безкоштовної
+# моделі OpenRouter.
+#
+# Якщо вона тимчасово недоступна — пробуємо резервні.
+#
+
+MODELS = [
+    "openrouter/free",
+    "openai/gpt-oss-20b:free",
+    "qwen/qwen3-30b-a3b:free",
+    "meta-llama/llama-3.3-8b-instruct:free",
+]
+
+
+# =====================================================
+# SYSTEM PROMPT
+# =====================================================
 
 SYSTEM_PROMPT = """
 Ти — Pohodun AI, дружній український помічник.
@@ -21,31 +38,63 @@ SYSTEM_PROMPT = """
 ГОЛОВНІ ПРАВИЛА:
 
 1. Завжди відповідай українською мовою.
-2. Не переходь на англійську без прямого прохання.
-3. Не використовуй китайські, японські або інші випадкові символи.
+
+2. Не переходь на англійську без прямого прохання
+   користувача.
+
+3. Не використовуй китайські, японські або інші
+   випадкові символи.
+
 4. Не вигадуй слова, факти або назви.
-5. Не згадуй випадкові слова, які не мають відношення
-   до питання користувача.
+
+5. Не згадуй випадкові слова, які не мають
+   відношення до питання користувача.
+
 6. Не вигадуй, що ти бачиш телефон, комп'ютер,
    Telegram, файли або інші пристрої користувача.
-7. Якщо користувач просто вітається — відповідай природно.
-8. Якщо питають "як справи?" — відповідай коротко,
-   дружньо і по-людськи.
-9. Якщо питання просте — відповідь теж має бути простою.
+
+7. Якщо користувач просто вітається —
+   відповідай природно.
+
+8. Якщо користувач питає "як справи?" —
+   відповідай коротко, дружньо і по-людськи.
+
+9. Якщо питання просте —
+   відповідь теж має бути простою.
+
 10. Не пиши величезні відповіді без потреби.
+
 11. Не повторюй своє ім'я в кожній відповіді.
+
 12. Не починай кожну відповідь словами
     "Привіт! Я Pohodun AI".
-13. Можеш використовувати емодзі, але помірно.
-14. Не використовуй дивні або випадкові набори символів.
-15. Якщо користувач жартує — можеш відповісти з гумором.
-16. Якщо користувач просить допомогти — допомагай конкретно.
-17. Якщо не знаєш відповіді — чесно скажи,
-    що не знаєш.
-18. Не вигадуй актуальну інформацію про погоду,
-    тривоги, загрози або новини.
-19. Якщо користувач питає про функції Pohodun,
-    пояснюй тільки те, що тобі відомо з контексту.
+
+13. Можеш використовувати емодзі,
+    але помірно.
+
+14. Не використовуй дивні або випадкові
+    набори символів.
+
+15. Якщо користувач жартує —
+    можеш відповісти з гумором.
+
+16. Якщо користувач просить допомогти —
+    допомагай конкретно.
+
+17. Якщо не знаєш відповіді —
+    чесно скажи, що не знаєш.
+
+18. Не вигадуй актуальну інформацію про:
+    - погоду;
+    - тривоги;
+    - загрози;
+    - новини.
+
+19. Актуальні тривоги та загрози отримуються
+    окремо з системи Pohodun. Не вигадуй їх.
+
+20. Якщо користувач питає про функції Pohodun —
+    пояснюй тільки те, що тобі відомо.
 
 СТИЛЬ:
 
@@ -54,7 +103,7 @@ SYSTEM_PROMPT = """
 - коротко і зрозуміло;
 - без зайвої офіційності;
 - без дивних фраз;
-- без "машинного" стилю.
+- без машинного стилю.
 
 Приклад:
 
@@ -75,36 +124,17 @@ SYSTEM_PROMPT = """
 """
 
 
-def ask_ai(question: str):
+# =====================================================
+# ЗАПИТ ДО OPENROUTER
+# =====================================================
 
-    print(
-        "🤖 AI REQUEST | "
-        f"model={MODEL}"
-    )
-
-    if not OPENROUTER_API_KEY:
-
-        print(
-            "❌ OPENROUTER_API_KEY "
-            "не знайдено"
-        )
-
-        return (
-            "❌ AI зараз недоступний."
-        )
-
-    question = (
-        question or ""
-    ).strip()
-
-    if not question:
-
-        return (
-            "❓ Напиши своє питання."
-        )
+def _request_model(
+    model: str,
+    question: str,
+):
 
     payload = {
-        "model": MODEL,
+        "model": model,
 
         "messages": [
             {
@@ -117,15 +147,12 @@ def ask_ai(question: str):
             },
         ],
 
-        # Трохи нижча температура,
-        # щоб відповіді були стабільнішими.
         "temperature": 0.4,
 
-        # Не дозволяємо моделі писати величезні полотна.
         "max_tokens": 500,
 
-        # Зменшуємо повторення.
         "frequency_penalty": 0.2,
+
         "presence_penalty": 0.0,
     }
 
@@ -145,174 +172,284 @@ def ask_ai(question: str):
         "X-Title": "Pohodun",
     }
 
-    try:
+    return requests.post(
+        OPENROUTER_URL,
+        headers=headers,
+        json=payload,
+        timeout=(5, 45),
+    )
 
-        response = requests.post(
-            OPENROUTER_URL,
-            headers=headers,
-            json=payload,
-            timeout=(5, 45),
-        )
+
+# =====================================================
+# AI
+# =====================================================
+
+def ask_ai(question: str):
+
+    print(
+        "🤖 AI REQUEST | "
+        f"question={question}"
+    )
+
+    # =================================================
+    # API KEY
+    # =================================================
+
+    if not OPENROUTER_API_KEY:
 
         print(
-            "🤖 AI RESPONSE | "
-            f"status={response.status_code}"
+            "❌ OPENROUTER_API_KEY "
+            "не знайдено"
         )
 
-        # =================================================
-        # ПОМИЛКА OPENROUTER
-        # =================================================
+        return (
+            "❌ AI зараз недоступний."
+        )
 
-        if response.status_code != 200:
+    # =================================================
+    # ПИТАННЯ
+    # =================================================
 
-            print(
-                "❌ OpenRouter помилка | "
-                f"status={response.status_code}"
-            )
+    question = (
+        question or ""
+    ).strip()
 
-            print(
-                "❌ OpenRouter response | "
-                f"{response.text}"
-            )
+    if not question:
 
-            return (
-                "❌ Не вдалося отримати "
-                "відповідь від AI."
-            )
+        return (
+            "❓ Напиши своє питання."
+        )
 
-        # =================================================
-        # JSON
-        # =================================================
+    # =================================================
+    # ПРОБУЄМО МОДЕЛІ
+    # =================================================
+
+    for index, model in enumerate(
+        MODELS,
+        start=1,
+    ):
+
+        print(
+            f"🤖 AI MODEL {index}/"
+            f"{len(MODELS)} | "
+            f"{model}"
+        )
 
         try:
 
-            data = response.json()
+            response = _request_model(
+                model,
+                question,
+            )
+
+        except requests.Timeout:
+
+            print(
+                f"⏱️ AI TIMEOUT | "
+                f"{model}"
+            )
+
+            continue
+
+        except requests.RequestException as e:
+
+            print(
+                f"❌ AI NETWORK ERROR | "
+                f"{model} | {e}"
+            )
+
+            continue
 
         except Exception as e:
 
             print(
-                "❌ OpenRouter JSON error | "
-                f"{e}"
+                f"❌ AI REQUEST ERROR | "
+                f"{model} | "
+                f"{type(e).__name__}: {e}"
+            )
+
+            continue
+
+        # =================================================
+        # СТАТУС
+        # =================================================
+
+        print(
+            f"🤖 AI RESPONSE | "
+            f"model={model} | "
+            f"status={response.status_code}"
+        )
+
+        # =================================================
+        # УСПІШНА ВІДПОВІДЬ
+        # =================================================
+
+        if response.status_code == 200:
+
+            try:
+
+                data = response.json()
+
+            except Exception as e:
+
+                print(
+                    f"❌ AI JSON ERROR | "
+                    f"{model} | {e}"
+                )
+
+                continue
+
+            choices = data.get(
+                "choices",
+                [],
+            )
+
+            if not choices:
+
+                print(
+                    f"❌ AI EMPTY CHOICES | "
+                    f"{model}"
+                )
+
+                continue
+
+            message = choices[0].get(
+                "message",
+                {},
+            )
+
+            answer = message.get(
+                "content"
+            )
+
+            if not answer:
+
+                print(
+                    f"❌ AI EMPTY CONTENT | "
+                    f"{model}"
+                )
+
+                continue
+
+            answer = str(
+                answer
+            ).strip()
+
+            if not answer:
+
+                print(
+                    f"❌ AI EMPTY ANSWER | "
+                    f"{model}"
+                )
+
+                continue
+
+            print(
+                f"✅ AI SUCCESS | "
+                f"model={model} | "
+                f"length={len(answer)}"
+            )
+
+            return answer
+
+        # =================================================
+        # 401 / 403
+        #
+        # Це вже не проблема конкретної моделі.
+        # Зазвичай проблема з API key / account.
+        # =================================================
+
+        if response.status_code in (
+            401,
+            403,
+        ):
+
+            print(
+                f"❌ AI AUTH ERROR | "
+                f"status={response.status_code} | "
+                f"model={model}"
             )
 
             print(
-                "❌ Response body | "
+                f"❌ OpenRouter response | "
                 f"{response.text}"
             )
 
             return (
-                "❌ AI повернув "
-                "некоректну відповідь."
+                "❌ Помилка доступу до AI. "
+                "Перевір API-ключ OpenRouter."
             )
 
         # =================================================
-        # ВІДПОВІДЬ
+        # 429
+        #
+        # Модель перевантажена або rate limit.
+        # Переходимо до наступної.
         # =================================================
 
-        choices = data.get(
-            "choices",
-            []
-        )
-
-        if not choices:
+        if response.status_code == 429:
 
             print(
-                "❌ OpenRouter: "
-                "choices порожній"
+                f"⚠️ AI RATE LIMIT | "
+                f"{model} | "
+                "переходимо до наступної моделі"
             )
 
             print(
-                f"❌ OpenRouter data | "
-                f"{data}"
+                f"⚠️ OpenRouter response | "
+                f"{response.text}"
             )
 
-            return (
-                "❌ AI не повернув "
-                "відповідь."
-            )
+            continue
 
-        message = choices[0].get(
-            "message",
-            {}
-        )
+        # =================================================
+        # 5XX
+        #
+        # Тимчасова помилка провайдера.
+        # Переходимо до наступної моделі.
+        # =================================================
 
-        answer = message.get(
-            "content"
-        )
-
-        if not answer:
+        if response.status_code >= 500:
 
             print(
-                "❌ OpenRouter: "
-                "content порожній"
+                f"⚠️ AI PROVIDER ERROR | "
+                f"status={response.status_code} | "
+                f"{model}"
             )
 
             print(
-                f"❌ AI message | "
-                f"{message}"
+                f"⚠️ OpenRouter response | "
+                f"{response.text}"
             )
 
-            return (
-                "❌ AI не повернув "
-                "текст відповіді."
-            )
+            continue
 
-        answer = str(
-            answer
-        ).strip()
-
-        if not answer:
-
-            print(
-                "❌ AI повернув "
-                "порожній текст"
-            )
-
-            return (
-                "❌ AI не сформував "
-                "відповідь."
-            )
+        # =================================================
+        # ІНША ПОМИЛКА
+        # =================================================
 
         print(
-            "✅ AI RESPONSE | "
-            f"length={len(answer)}"
+            f"❌ AI ERROR | "
+            f"status={response.status_code} | "
+            f"model={model}"
         )
-
-        return answer
-
-    except requests.Timeout:
 
         print(
-            "⏱️ AI: перевищено "
-            "час очікування"
+            f"❌ OpenRouter response | "
+            f"{response.text}"
         )
 
-        return (
-            "⏱️ AI занадто довго "
-            "не відповідає. "
-            "Спробуй ще раз."
-        )
+    # =====================================================
+    # ВСІ МОДЕЛІ НЕ СПРАЦЮВАЛИ
+    # =====================================================
 
-    except requests.RequestException as e:
+    print(
+        "❌ AI: усі доступні моделі "
+        "тимчасово недоступні"
+    )
 
-        print(
-            "❌ AI network error | "
-            f"{e}"
-        )
-
-        return (
-            "❌ Помилка з'єднання "
-            "з AI."
-        )
-
-    except Exception as e:
-
-        print(
-            "❌ Помилка AI | "
-            f"{type(e).__name__}: {e}"
-        )
-
-        return (
-            "❌ Сталася помилка "
-            "під час звернення до AI."
-        )
+    return (
+        "❌ Зараз AI тимчасово "
+        "недоступний. Спробуй ще раз "
+        "через кілька секунд."
+    )
