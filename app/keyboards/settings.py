@@ -1,6 +1,5 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-
 settings_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [
@@ -11,11 +10,6 @@ settings_keyboard = ReplyKeyboardMarkup(
         [
             KeyboardButton(
                 text="📍 Локація моніторингу"
-            ),
-        ],
-        [
-            KeyboardButton(
-                text="🛰 Загрози"
             ),
         ],
         [

@@ -17,10 +17,11 @@ def get_main_menu(user_id: int):
             KeyboardButton(text="🚨 Тривоги"),
         ],
         [
+            KeyboardButton(text="🛰 Загрози"),
             KeyboardButton(text="🌫 Якість повітря"),
         ],
         [
-            KeyboardButton(text="👕 Актуально"),
+            KeyboardButton(text="📣 Є що сказати"),
         ],
         [
             KeyboardButton(text="⚙️ Налаштування"),
