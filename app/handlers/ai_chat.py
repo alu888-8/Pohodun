@@ -1,4 +1,3 @@
-cat > app/handlers/ai_chat.py <<'PY'
 import asyncio
 
 from aiogram import Router
@@ -47,7 +46,7 @@ async def start_ai_chat(
 
 
 # =====================================================
-# ПОВЕРНЕННЯ В ГОЛОВНЕ МЕНЮ
+# ВИХІД З AI
 # =====================================================
 
 @router.message(
@@ -75,7 +74,7 @@ async def exit_ai_chat(
 
 
 # =====================================================
-# ПОВІДОМЛЕННЯ ДЛЯ AI
+# ПИТАННЯ ДО AI
 # =====================================================
 
 @router.message(
@@ -108,19 +107,15 @@ async def ask_pohodun_ai(
     )
 
     try:
-
         await thinking_message.delete()
-
     except Exception:
         pass
 
     await message.answer(
-        answer,
-        parse_mode="HTML",
+        answer
     )
 
     print(
         f"✅ AI CHAT | "
         f"user_id={message.from_user.id}"
     )
-PY
