@@ -12,6 +12,12 @@ from app.services.threats import get_threats
 from app.services.weather import get_weather
 from app.services.advice import get_advice
 from app.services import ai_joke
+from app.services.day_facts import get_day_facts
+
+from app.database.db import (
+    get_scheduler_last_run,
+    set_scheduler_last_run,
+)
 
 from app.services.neptun_locations import (
     find_city_location,
@@ -1473,23 +1479,29 @@ async def send_morning_weather(
         sent_cities = set()
 
         for city in cities:
+
             if city in sent_cities:
                 continue
 
             sent_cities.add(city)
 
             try:
+
                 weather = await asyncio.to_thread(
                     get_weather,
                     city,
                 )
 
                 if not weather:
+                    print(
+                        f"⚠️ Немає погоди для {city}"
+                    )
                     continue
 
                 advice = ""
 
                 try:
+
                     advice_result = get_advice(
                         weather
                     )
@@ -1501,8 +1513,10 @@ async def send_morning_weather(
                         )
 
                 except Exception as e:
+
                     print(
-                        f"⚠️ Помилка поради: {e}"
+                        f"⚠️ Помилка поради "
+                        f"{city}: {e}"
                     )
 
                 icon = get_weather_icon(
@@ -1530,36 +1544,226 @@ async def send_morning_weather(
                     text,
                 )
 
+                print(
+                    f"✅ Ранкова погода "
+                    f"відправлена: {city}"
+                )
+
                 await asyncio.sleep(1)
 
             except Exception as e:
+
                 print(
                     f"❌ Помилка погоди "
                     f"{city}: {e}"
                 )
 
     except Exception as e:
+
         print(
             f"❌ Помилка ранкової погоди: {e}"
         )
 
 
 # =====================================================
-# ПЛАНУВАЛЬНИК РАНКОВОЇ ПОГОДИ
+# Є ЩО СКАЗАТИ
+# =====================================================
+
+async def send_morning_day_facts(
+    bot: Bot,
+):
+    print(
+        "📣 Формування ранкового "
+        "«Є що сказати»..."
+    )
+
+    try:
+
+        conn = sqlite3.connect(
+            "app/database/users.db"
+        )
+
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT city
+            FROM users
+            WHERE city IS NOT NULL
+              AND city != ''
+        """)
+
+        rows = cursor.fetchall()
+
+        conn.close()
+
+        cities = [
+            row[0]
+            for row in rows
+            if row[0]
+        ]
+
+        if not cities:
+
+            print(
+                "ℹ️ Немає міст для "
+                "«Є що сказати»"
+            )
+
+            return
+
+        sent_cities = set()
+
+        for city in cities:
+
+            if city in sent_cities:
+                continue
+
+            sent_cities.add(city)
+
+            try:
+
+                text = await asyncio.to_thread(
+                    get_day_facts,
+                    city,
+                )
+
+                if not text:
+                    print(
+                        f"⚠️ Немає контенту "
+                        f"для {city}"
+                    )
+                    continue
+
+                await send_to_group(
+                    bot,
+                    text,
+                )
+
+                print(
+                    f"✅ «Є що сказати» "
+                    f"відправлено: {city}"
+                )
+
+                await asyncio.sleep(1)
+
+            except Exception as e:
+
+                print(
+                    f"❌ Помилка «Є що сказати» "
+                    f"{city}: {e}"
+                )
+
+    except Exception as e:
+
+        print(
+            "❌ Помилка формування "
+            f"«Є що сказати»: {e}"
+        )
+
+
+# =====================================================
+# РАНКОВА РОЗСИЛКА
+# =====================================================
+
+async def send_morning_content(
+    bot: Bot,
+):
+    print(
+        "🌅 Початок ранкової розсилки"
+    )
+
+    # -------------------------------------------------
+    # 1. ПОГОДА
+    # -------------------------------------------------
+
+    await send_morning_weather(
+        bot
+    )
+
+    # -------------------------------------------------
+    # 2. Є ЩО СКАЗАТИ
+    # -------------------------------------------------
+
+    await send_morning_day_facts(
+        bot
+    )
+
+    print(
+        "✅ Ранкова розсилка завершена"
+    )
+
+
+# =====================================================
+# ПЛАНУВАЛЬНИК РАНКОВОЇ РОЗСИЛКИ
 # =====================================================
 
 async def morning_weather_scheduler(
     bot: Bot,
 ):
     print(
-        "🌅 Планувальник ранкової погоди запущений"
+        "🌅 Планувальник ранкової "
+        "розсилки запущений"
+    )
+
+    scheduler_name = (
+        "morning_content"
     )
 
     while True:
+
         try:
+
             now = datetime.now(
                 KYIV_TIMEZONE
             )
+
+            today = now.strftime(
+                "%Y-%m-%d"
+            )
+
+            last_run = (
+                get_scheduler_last_run(
+                    scheduler_name
+                )
+            )
+
+            # =================================================
+            # ЯКЩО СЬОГОДНІ ЩЕ НЕ БУЛО РОЗСИЛКИ
+            # =================================================
+
+            if last_run != today:
+
+                # Якщо вже 08:00 або пізніше,
+                # виконуємо сьогоднішню розсилку.
+                # Це також рятує ситуацію,
+                # коли Railway перезапустив бота після 08:00.
+
+                if now.hour >= 8:
+
+                    print(
+                        "🌅 Сьогоднішня ранкова "
+                        "розсилка ще не виконувалась"
+                    )
+
+                    await send_morning_content(
+                        bot
+                    )
+
+                    set_scheduler_last_run(
+                        scheduler_name,
+                        today,
+                    )
+
+                    print(
+                        "💾 Ранкова розсилка "
+                        f"записана: {today}"
+                    )
+
+                    continue
+
+            # =================================================
+            # НАСТУПНИЙ ЗАПУСК
+            # =================================================
 
             next_run = now.replace(
                 hour=8,
@@ -1569,6 +1773,7 @@ async def morning_weather_scheduler(
             )
 
             if next_run <= now:
+
                 next_run += timedelta(
                     days=1
                 )
@@ -1578,7 +1783,8 @@ async def morning_weather_scheduler(
             ).total_seconds()
 
             print(
-                "⏰ Наступна ранкова погода: "
+                "⏰ Наступна ранкова "
+                "розсилка: "
                 f"{next_run.strftime('%d.%m.%Y %H:%M')}"
             )
 
@@ -1586,17 +1792,17 @@ async def morning_weather_scheduler(
                 wait_seconds
             )
 
-            await send_morning_weather(
-                bot
+        except asyncio.CancelledError:
+
+            print(
+                "🌅 Планувальник ранкової "
+                "розсилки зупинений"
             )
 
-        except asyncio.CancelledError:
-            print(
-                "🌅 Планувальник ранкової погоди зупинений"
-            )
             raise
 
         except Exception as e:
+
             print(
                 f"❌ Помилка планувальника: {e}"
             )

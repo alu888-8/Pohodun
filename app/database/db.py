@@ -78,6 +78,17 @@ def init_db():
         )
     """)
 
+    # =====================================================
+    # СТАН ПЛАНУВАЛЬНИКА
+    # =====================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scheduler_state (
+            name TEXT PRIMARY KEY,
+            last_run_date TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -377,6 +388,63 @@ def save_daily_content(
         content_date,
         joke,
         greeting
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =====================================================
+# СТАН ПЛАНУВАЛЬНИКА
+# =====================================================
+
+def get_scheduler_last_run(
+    name
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT last_run_date
+        FROM scheduler_state
+        WHERE name=?
+    """, (
+        name,
+    ))
+
+    row = cursor.fetchone()
+
+    conn.close()
+
+    if not row:
+
+        return None
+
+    return row[0]
+
+
+def set_scheduler_last_run(
+    name,
+    run_date
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO scheduler_state (
+            name,
+            last_run_date
+        )
+        VALUES (?, ?)
+
+        ON CONFLICT(name)
+        DO UPDATE SET
+            last_run_date=excluded.last_run_date
+    """, (
+        name,
+        run_date,
     ))
 
     conn.commit()
