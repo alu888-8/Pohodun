@@ -1,4 +1,3 @@
-cat > app/keyboards/menu.py <<'PY'
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -54,16 +53,13 @@ def get_main_menu(
 
     # =====================================================
     # АДМІНКА
-    #
-    # Тільки для ADMIN_ID
-    # Тільки в особистому чаті
+    # Тільки ADMIN_ID і тільки особистий чат
     # =====================================================
 
     if (
         user_id == ADMIN_ID
         and chat_type == "private"
     ):
-
         keyboard.append(
             [
                 KeyboardButton(
@@ -76,4 +72,3 @@ def get_main_menu(
         keyboard=keyboard,
         resize_keyboard=True,
     )
-PY
