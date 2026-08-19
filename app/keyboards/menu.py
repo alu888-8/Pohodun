@@ -3,36 +3,68 @@ from aiogram.types import (
     KeyboardButton,
 )
 
+
 ADMIN_ID = 366025054
 
 
-def get_main_menu(user_id: int):
+def get_main_menu(
+    user_id: int,
+    chat_type: str = "private",
+):
 
     keyboard = [
         [
-            KeyboardButton(text="🌤 Погода зараз"),
+            KeyboardButton(
+                text="🌤 Погода зараз"
+            ),
         ],
         [
-            KeyboardButton(text="📅 Прогноз"),
-            KeyboardButton(text="🚨 Тривоги"),
+            KeyboardButton(
+                text="📅 Прогноз"
+            ),
+            KeyboardButton(
+                text="🚨 Тривоги"
+            ),
         ],
         [
-            KeyboardButton(text="🛰 Загрози"),
-            KeyboardButton(text="🌫 Якість повітря"),
+            KeyboardButton(
+                text="🛰 Загрози"
+            ),
+            KeyboardButton(
+                text="🌫 Якість повітря"
+            ),
         ],
         [
-            KeyboardButton(text="📣 Є що сказати"),
+            KeyboardButton(
+                text="📣 Є що сказати"
+            ),
         ],
         [
-            KeyboardButton(text="⚙️ Налаштування"),
+            KeyboardButton(
+                text="⚙️ Налаштування"
+            ),
         ],
     ]
 
-    # Кнопка адмінки тільки для адміністратора
-    if user_id == ADMIN_ID:
+    # =====================================================
+    # АДМІНКА
+    #
+    # Тільки адміністратор
+    # Тільки в особистому чаті з ботом
+    #
+    # У групі / супергрупі кнопки немає
+    # =====================================================
+
+    if (
+        user_id == ADMIN_ID
+        and chat_type == "private"
+    ):
+
         keyboard.append(
             [
-                KeyboardButton(text="🔧 Адмінка"),
+                KeyboardButton(
+                    text="🔧 Адмінка"
+                ),
             ]
         )
 
