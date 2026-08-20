@@ -21,12 +21,11 @@ from app.services.threats import (
 )
 
 from app.handlers.threats import (
-    find_nearby_threats,
+    find_relevant_threats,
     get_city_alert_status,
     get_city_oblast,
     get_active_oblast_raions,
     format_threat,
-    THREAT_RADIUS_KM,
 )
 
 
@@ -243,9 +242,10 @@ async def get_threats_for_ai(
     )
 
     nearby_threats = (
-        find_nearby_threats(
+        find_relevant_threats(
             location,
             threats_data,
+            city_oblast,
         )
     )
 
@@ -359,26 +359,13 @@ async def get_threats_for_ai(
 
         text += (
             "🟢 Конкретних активних "
-            "загроз у радіусі "
-            f"{THREAT_RADIUS_KM} км "
-            "не виявлено."
+            "загроз, віднесених до "
+            "вашої області, не виявлено."
         )
 
     # =================================================
     # ПОЯСНЕННЯ
     # =================================================
-
-    if (
-        not city_alert
-        and active_oblast_raions
-    ):
-
-        text += (
-            "\n\nℹ️ <b>Важливо:</b> "
-            "тривога в іншому районі "
-            "області не означає автоматично "
-            f"тривогу в місті {city}."
-        )
 
     # =================================================
     # ФІНАЛ

@@ -25,6 +25,7 @@ router = Router()
 # НАЛАШТУВАННЯ
 # =====================================================
 
+THREAT_RADIUS_KM = 70
 
 
 # =====================================================
@@ -332,302 +333,881 @@ def get_location_coordinates(
 
 
 # =====================================================
-# ПОШУК АКТИВНИХ ЗАГРОЗ
+# ПОШУК КОНКРЕТНИХ ЗАГРОЗ ПОБЛИЗУ
 # =====================================================
 
-def normalize_oblast_name(value):
-    """
-    Нормалізує назву області для порівняння.
-
-    NEPTUN / Threats API можуть повертати:
-        "Київська область"
-        "Київська"
-        "київська обл."
-        "Kyiv oblast"
-
-    Для порівняння прибираємо лише службову частину назви.
-    Сам текст загрози не змінюємо.
-    """
-
-    value = normalize(value)
-
-    if not value:
-        return ""
-
-    replacements = (
-        " область",
-        " обл.",
-        " обл",
-        " oblast",
-        " region",
-    )
-
-    for suffix in replacements:
-        if value.endswith(suffix):
-            value = value[:-len(suffix)].strip()
-
-    return value
-
-
-def get_threat_oblast(threat):
-    """
-    Визначає область загрози без геометричних припущень.
-
-    Пріоритет:
-    1. region з Threats API.
-    2. district через NEPTUN.
-    3. locality через NEPTUN.
-
-    Якщо визначити область неможливо — повертаємо "".
-    """
-
-    if not isinstance(threat, dict):
-        return ""
-
-    region = (
-        threat.get("region")
-        or threat.get("oblast")
-        or threat.get("oblastName")
-        or ""
-    )
-
-    if region:
-        return str(region).strip()
-
-    district = (
-        threat.get("district")
-        or threat.get("raion")
-        or threat.get("raionName")
-        or ""
-    )
-
-    if district:
-        try:
-            raion = find_raion(
-                str(district).strip()
-            )
-
-            if raion:
-                oblast = (
-                    raion.get("oblast_name")
-                    or raion.get("oblast")
-                    or ""
-                )
-
-                if oblast:
-                    return str(oblast).strip()
-
-        except Exception as e:
-            print(
-                f"⚠️ NEPTUN threat district lookup "
-                f"{district}: {e}"
-            )
-
-    locality = (
-        threat.get("locality")
-        or threat.get("city")
-        or ""
-    )
-
-    if locality:
-        try:
-            city = find_city_location(
-                str(locality).strip()
-            )
-
-            if city:
-                oblast = (
-                    city.get("oblast_name")
-                    or city.get("oblast")
-                    or ""
-                )
-
-                if oblast:
-                    return str(oblast).strip()
-
-        except Exception as e:
-            print(
-                f"⚠️ NEPTUN threat locality lookup "
-                f"{locality}: {e}"
-            )
-
-    return ""
-
-
-def find_relevant_threats(
+def get_location_admin_info(
     location,
-    threats_data,
-    city_oblast,
+    city,
 ):
     """
-    Повертає ТІЛЬКИ активні загрози, які NEPTUN/Threats API
-    можна віднести до області користувача.
+    Визначає адміністративну прив'язку локації через NEPTUN.
+
+    Повертає:
+        oblast_name,
+        raion_key,
+        raion_name.
+
+    Не використовуємо координати для визначення того,
+    чи є загроза релевантною для користувача.
+    """
+
+    oblast_name = normalize(
+        location.get("oblast_name")
+        or location.get("oblast")
+        or ""
+    ) if location else ""
+
+    raion_key = normalize(
+        location.get("raion_key")
+        or ""
+    ) if location else ""
+
+    raion_name = normalize(
+        location.get("raion_name")
+        or ""
+    ) if location else ""
+
+    location_key = normalize(
+        location.get("key")
+        or ""
+    ) if location else ""
+
+    # Район NEPTUN — головне джерело.
+    if not raion_key and location_key:
+        try:
+            raion = find_raion(
+                location_key
+            )
+        except Exception as e:
+            print(
+                f"⚠️ NEPTUN raion lookup error "
+                f"{location_key}: {e}"
+            )
+            raion = None
+
+        if raion:
+            raion_key = normalize(
+                raion.get("key")
+            )
+            raion_name = normalize(
+                raion.get("name")
+            )
+            oblast_name = normalize(
+                raion.get("oblast_name")
+                or raion.get("oblast")
+                or oblast_name
+            )
+
+    # Якщо району ще немає — беремо місто з NEPTUN.
+    if city and (
+        not raion_key
+        or not oblast_name
+    ):
+        try:
+            neptun_city = find_city_location(
+                city
+            )
+        except Exception as e:
+            print(
+                f"⚠️ NEPTUN city lookup error "
+                f"{city}: {e}"
+            )
+            neptun_city = None
+
+        if neptun_city:
+            raion_key = raion_key or normalize(
+                neptun_city.get("raion_key")
+            )
+            raion_name = raion_name or normalize(
+                neptun_city.get("raion_name")
+            )
+            oblast_name = oblast_name or normalize(
+                neptun_city.get("oblast_name")
+                or neptun_city.get("oblast")
+            )
+
+    # Київ — окрема адміністративна одиниця.
+    if normalize(city) in ("київ", "kyiv"):
+        oblast_name = normalize(
+            "Київська область"
+        )
+        raion_key = ""
+        raion_name = ""
+
+    return (
+        oblast_name,
+        raion_key,
+        raion_name,
+    )
+
+
+def _same_admin_value(
+    value,
+    target,
+):
+    """Порівнює адміністративні назви без зайвих припущень."""
+
+    value = normalize(value)
+    target = normalize(target)
+
+    if not value or not target:
+        return False
+
+    return value == target
+
+
+def find_nearby_threats(
+    location,
+    threats_data,
+    city=None,
+    city_oblast=None,
+):
+    """
+    Повертає тільки адміністративно релевантні загрози NEPTUN.
 
     ВАЖЛИВО:
-    - не використовуємо кілометраж;
-    - не рахуємо власний радіус;
-    - не трактуємо areaOnly як точку;
-    - не вигадуємо район або населений пункт;
-    - stale НЕ показуємо як "активну загрозу";
-    - область визначаємо з region, а якщо його немає —
-      через NEPTUN за district/locality.
+    Кілометри НЕ використовуються для визначення релевантності.
+    Координати areaOnly також НЕ використовуються.
+
+    Для точкової загрози:
+        - показуємо її, якщо locality = місто користувача;
+        - або якщо district = район користувача.
+
+    Для areaOnly=True:
+        - точне місце невідоме;
+        - показуємо лише як обласну загрозу тієї самої області;
+        - не показуємо курс та не робимо висновок про близькість.
     """
 
     result = []
 
-    if not threats_data:
+    if not location or not threats_data:
         return result
 
-    target_oblast = normalize_oblast_name(
-        city_oblast
+    city_name = (
+        city
+        or location.get("name")
+        or ""
     )
 
-    if not target_oblast:
-        print(
-            "⚠️ THREATS | не вдалося визначити "
-            "область користувача"
+    user_oblast, user_raion_key, user_raion_name = (
+        get_location_admin_info(
+            location,
+            city_name,
         )
-        return result
+    )
+
+    if city_oblast:
+        user_oblast = normalize(
+            city_oblast
+        )
+
+    print(
+        f"📍 NEPTUN ADMIN | "
+        f"city={city_name} | "
+        f"oblast={user_oblast} | "
+        f"raion={user_raion_name}"
+    )
 
     for threat in threats_data:
-
         if not isinstance(threat, dict):
             continue
-
-        # ---------------------------------------------
-        # Тільки реально активні.
-        # ---------------------------------------------
 
         status = normalize(
             threat.get("status")
         )
 
-        if status != "active":
+        if status not in (
+            "active",
+            "activated",
+            "stale",
+        ):
             continue
 
-        # ---------------------------------------------
-        # Визначаємо область загрози.
-        # ---------------------------------------------
-
-        threat_oblast = get_threat_oblast(
-            threat
+        threat_region = normalize(
+            threat.get("region")
         )
 
-        normalized_threat_oblast = (
-            normalize_oblast_name(
-                threat_oblast
-            )
+        threat_district = normalize(
+            threat.get("district")
         )
 
-        if not normalized_threat_oblast:
-            print(
-                f"ℹ️ THREAT SKIP | "
-                f"область не визначена | "
-                f"title={threat.get('title')}"
-            )
-            continue
-
-        # ---------------------------------------------
-        # Порівнюємо області.
-        # ---------------------------------------------
-
-        if normalized_threat_oblast != target_oblast:
-            continue
+        threat_locality = normalize(
+            threat.get("locality")
+        )
 
         area_only = bool(
-            threat.get("areaOnly")
+            threat.get("areaOnly", False)
         )
+
+        relevant = False
+        relevance = ""
+
+        # =================================================
+        # AREA ONLY
+        # =================================================
+
+        if area_only:
+            if (
+                user_oblast
+                and threat_region
+                and _same_admin_value(
+                    threat_region,
+                    user_oblast,
+                )
+            ):
+                relevant = True
+                relevance = "oblast"
+
+        # =================================================
+        # ТОЧКОВА ЗАГРОЗА
+        # =================================================
+
+        else:
+            # Для Києва locality=Київ — єдина безпечна
+            # точна міська прив'язка. Київська область
+            # автоматично до Києва не прирівнюється.
+            if (
+                normalize(city_name) in ("київ", "kyiv")
+                and threat_locality in (
+                    "київ",
+                    "kyiv",
+                    "м. київ",
+                    "місто київ",
+                )
+            ):
+                relevant = True
+                relevance = "city"
+
+            # Для інших міст — точна locality.
+            elif (
+                threat_locality
+                and _same_admin_value(
+                    threat_locality,
+                    city_name,
+                )
+            ):
+                relevant = True
+                relevance = "city"
+
+            # Район NEPTUN — другий рівень прив'язки.
+            elif (
+                threat_district
+                and user_raion_name
+                and _same_admin_value(
+                    threat_district,
+                    user_raion_name,
+                )
+            ):
+                relevant = True
+                relevance = "raion"
+
+            elif (
+                threat_region
+                and user_oblast
+                and threat_district
+                and user_raion_key
+                and threat_district == user_raion_key
+            ):
+                relevant = True
+                relevance = "raion_key"
+
+        if not relevant:
+            continue
 
         result.append(
             {
                 "threat": threat,
+                "distance": None,
                 "area_only": area_only,
+                "relevance": relevance,
             }
         )
 
         print(
-            f"🎯 ACTIVE THREAT RELEVANT | "
-            f"title={threat.get('title')} | "
-            f"region={threat.get('region')} | "
-            f"district={threat.get('district')} | "
+            f"🎯 NEPTUN THREAT MATCH | "
+            f"{threat.get('type')} | "
             f"locality={threat.get('locality')} | "
-            f"oblast={threat_oblast} | "
-            f"areaOnly={area_only}"
+            f"district={threat.get('district')} | "
+            f"region={threat.get('region')} | "
+            f"areaOnly={area_only} | "
+            f"relevance={relevance}"
         )
 
-    # Новіші записи першими.
+    # Точні міські/районні загрози першими,
+    # areaOnly — після них.
     result.sort(
         key=lambda item: (
-            item.get("threat", {}).get(
-                "updatedAt",
-                ""
-            )
-        ),
-        reverse=True,
+            item.get("area_only", False),
+            item.get("relevance") == "oblast",
+        )
     )
-
-    # ---------------------------------------------
-    # Дублікати.
-    # ---------------------------------------------
 
     unique = []
     seen = set()
 
     for item in result:
-
         threat = item.get(
             "threat",
-            {},
+            {}
         )
 
         threat_id = (
             threat.get("id")
             or (
-                threat.get("title"),
                 threat.get("type"),
-                threat.get("district"),
                 threat.get("locality"),
+                threat.get("district"),
                 threat.get("region"),
+                threat.get("updatedAt"),
             )
         )
 
         if threat_id in seen:
             continue
 
-        seen.add(
-            threat_id
-        )
-
-        unique.append(
-            item
-        )
+        seen.add(threat_id)
+        unique.append(item)
 
     print(
-        f"📡 АКТИВНИХ ЗАГРОЗ ДЛЯ ОБЛАСТІ "
-        f"{city_oblast}: {len(unique)}"
+        f"📡 NEPTUN релевантних загроз "
+        f"для {city_name}: {len(unique)}"
     )
 
     return unique
 
 
-# Сумісність зі старим кодом
-find_nearby_threats = find_relevant_threats
+# =====================================================
+# ВИЗНАЧЕННЯ ТРИВОГИ В МІСТІ
+# =====================================================
+
+def get_city_alert_status(
+    city,
+    alerts_data,
+    location=None,
+):
+
+    if not city:
+        return False
+
+    if not alerts_data:
+        return False
+
+    city_key = normalize(
+        city
+    )
+
+    # =================================================
+    # КИЇВ
+    #
+    # Київ — окрема адміністративна одиниця.
+    #
+    # НЕ МОЖНА брати:
+    # Бориспільський район
+    # Броварський район
+    #
+    # за тривогу в Києві.
+    # =================================================
+
+    if city_key in (
+        "київ",
+        "kyiv",
+    ):
+
+        for item in (
+            alerts_data.get(
+                "raions",
+                []
+            )
+            +
+            alerts_data.get(
+                "oblasts",
+                []
+            )
+        ):
+
+            key = normalize(
+                item.get("key")
+            )
+
+            name = normalize(
+                item.get("name")
+            )
+
+            if key in (
+                "kyiv",
+                "kyiv-city",
+                "м. київ",
+                "місто київ",
+            ):
+
+                print(
+                    "🚨 CITY ALERT | "
+                    "city=Київ | active=True"
+                )
+
+                return True
+
+            if name in (
+                "київ",
+                "м. київ",
+                "місто київ",
+            ):
+
+                print(
+                    "🚨 CITY ALERT | "
+                    "city=Київ | active=True"
+                )
+
+                return True
+
+        print(
+            "🟢 CITY ALERT | "
+            "city=Київ | active=False"
+        )
+
+        return False
+
+    # =================================================
+    # РАЙОН МІСТА
+    #
+    # Беремо його безпосередньо
+    # з location, якщо є.
+    # =================================================
+
+    target_raion_key = ""
+
+    target_raion_name = ""
+
+    if location:
+
+        target_raion_key = normalize(
+            location.get(
+                "raion_key"
+            )
+        )
+
+        target_raion_name = normalize(
+            location.get(
+                "raion_name"
+            )
+        )
+
+    # =================================================
+    # Якщо location не має району:
+    # 1. спочатку перевіряємо, чи сама location є районом;
+    # 2. потім пробуємо знайти місто через Neptun.
+    # =================================================
+
+    if not target_raion_key:
+
+        location_key = ""
+
+        if location:
+            location_key = normalize(
+                location.get("key")
+            )
+
+        if location_key:
+
+            try:
+
+                raion = find_raion(
+                    location_key
+                )
+
+                if raion:
+
+                    target_raion_key = normalize(
+                        raion.get("key")
+                    )
+
+                    target_raion_name = normalize(
+                        raion.get("name")
+                    )
+
+                    print(
+                        f"📍 LOCATION RAION | "
+                        f"{city} → "
+                        f"{raion.get('name')}"
+                    )
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ Neptun direct raion error "
+                    f"{location_key}: {e}"
+                )
+
+    if not target_raion_key:
+
+        try:
+
+            neptun_city = (
+                find_city_location(
+                    city
+                )
+            )
+
+            if neptun_city:
+
+                target_raion_key = normalize(
+                    neptun_city.get(
+                        "raion_key"
+                    )
+                )
+
+                target_raion_name = normalize(
+                    neptun_city.get(
+                        "raion_name"
+                    )
+                )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Neptun city raion error "
+                f"{city}: {e}"
+            )
+
+    # =================================================
+    # Перевіряємо райони
+    # =================================================
+
+    if target_raion_key:
+
+        for item in alerts_data.get(
+            "raions",
+            [],
+        ):
+
+            item_key = normalize(
+                item.get("key")
+            )
+
+            item_name = normalize(
+                item.get("name")
+            )
+
+            if item_key == target_raion_key:
+
+                print(
+                    f"🚨 CITY ALERT | "
+                    f"city={city} | "
+                    f"raion={item.get('name')} | "
+                    f"active=True"
+                )
+
+                return True
+
+            if (
+                target_raion_name
+                and item_name
+                == target_raion_name
+            ):
+
+                print(
+                    f"🚨 CITY ALERT | "
+                    f"city={city} | "
+                    f"raion={item.get('name')} | "
+                    f"active=True"
+                )
+
+                return True
+
+        return False
+
+    # =================================================
+    # РЕЗЕРВНА ПЕРЕВІРКА
+    # =================================================
+
+    for item in (
+        alerts_data.get(
+            "raions",
+            []
+        )
+        +
+        alerts_data.get(
+            "oblasts",
+            []
+        )
+    ):
+
+        key = normalize(
+            item.get("key")
+        )
+
+        name = normalize(
+            item.get("name")
+        )
+
+        if key == city_key:
+            return True
+
+        if name == city_key:
+            return True
+
+    return False
+
+
+# =====================================================
+# АКТИВНІ РАЙОНИ КОНКРЕТНОЇ ОБЛАСТІ
+# =====================================================
+
+def get_active_oblast_raions(
+    oblast_name,
+    alerts_data,
+):
+
+    if not oblast_name:
+        return []
+
+    if not alerts_data:
+        return []
+
+    target_oblast = normalize(
+        oblast_name
+    )
+
+    result = []
+
+    for item in alerts_data.get(
+        "raions",
+        [],
+    ):
+
+        item_oblast = normalize(
+            item.get("oblast")
+        )
+
+        if item_oblast != target_oblast:
+            continue
+
+        result.append(
+            item
+        )
+
+    return result
+
+
+# =====================================================
+# НАЗВА ОБЛАСТІ ДЛЯ МІСТА
+# =====================================================
+
+def get_city_oblast(
+    city,
+    location=None,
+):
+
+    city_key = normalize(
+        city
+    )
+
+    # =================================================
+    # КИЇВ
+    #
+    # Окремо від Київської області.
+    # =================================================
+
+    if city_key in (
+        "київ",
+        "kyiv",
+    ):
+
+        return "Київська область"
+
+    # =================================================
+    # Дані з location
+    # =================================================
+
+    if location:
+
+        oblast = (
+            location.get(
+                "oblast_name"
+            )
+            or location.get(
+                "oblast"
+            )
+            or ""
+        )
+
+        oblast_key = normalize(
+            oblast
+        )
+
+        # Старий запис міг містити
+        # "Київ" замість "Київська область".
+        if oblast_key in (
+            "київ",
+            "kyiv",
+        ):
+
+            return "Київська область"
+
+        if oblast:
+            return oblast
+
+    # =================================================
+    # Neptun — спочатку район, потім місто
+    # =================================================
+
+    if location:
+
+        location_key = normalize(
+            location.get("key")
+        )
+
+        if location_key:
+
+            try:
+
+                raion = find_raion(
+                    location_key
+                )
+
+                if raion:
+
+                    oblast = (
+                        raion.get(
+                            "oblast_name"
+                        )
+                        or raion.get(
+                            "oblast"
+                        )
+                        or ""
+                    )
+
+                    if oblast:
+                        return oblast
+
+            except Exception as e:
+
+                print(
+                    f"⚠️ Neptun direct raion oblast error "
+                    f"{location_key}: {e}"
+                )
+
+    try:
+
+        neptun_city = (
+            find_city_location(
+                city
+            )
+        )
+
+        if neptun_city:
+
+            oblast = (
+                neptun_city.get(
+                    "oblast_name"
+                )
+            )
+
+            if oblast:
+                return oblast
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Neptun city oblast error "
+            f"{city}: {e}"
+        )
+
+    return ""
+
+
+# =====================================================
+# ІКОНКА ЗАГРОЗИ
+# =====================================================
+
+def get_threat_icon(threat_type):
+    return {
+        "uav": "🛸",
+        "missile": "🚀",
+        "ballistic": "💥",
+        "kab": "💣",
+        "mig31k": "✈️",
+        "recon": "👀",
+        "fpv": "🛸",
+        "unknown": "❓",
+    }.get(
+        normalize(threat_type),
+        "❓",
+    )
+
 
 
 # =====================================================
 # ФОРМУВАННЯ ЗАГРОЗИ
 # =====================================================
 
+THREAT_TYPE_NAMES = {
+    "uav": "БпЛА",
+    "missile": "ракета",
+    "ballistic": "балістика",
+    "kab": "КАБ",
+    "mig31k": "МіГ-31К",
+    "recon": "розвідувальна загроза",
+    "fpv": "FPV-дрон",
+    "unknown": "невідома загроза",
+}
+
+
+def get_threat_type_name(
+    threat,
+):
+    """
+    Перетворює type з Threats API
+    у нормальну українську назву.
+
+    Нічого не вигадуємо:
+    беремо саме поле type.
+    """
+
+    threat_type = normalize(
+        threat.get("type")
+    )
+
+    return THREAT_TYPE_NAMES.get(
+        threat_type,
+        threat.get("title")
+        or "невідома загроза",
+    )
+
+
 def get_heading_text(
     heading,
 ):
+    """
+    Перетворює курс у градусах
+    на зрозумілий напрямок.
+
+    Наприклад:
+        0   → північ
+        90  → схід
+        180 → південь
+        270 → захід
+    """
+
     if heading is None:
         return ""
 
     try:
-        value = float(heading) % 360
-    except (TypeError, ValueError):
-        return str(heading).strip()
+        value = float(
+            heading
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(
+            heading
+        ).strip()
+
+    value %= 360
 
     directions = (
         "північ",
@@ -653,39 +1233,39 @@ def get_heading_text(
 def format_threat(
     item,
 ):
+    """
+    Формує загрозу без штучного визначення відстані або цілі.
+
+    locality/district/region — це адміністративні дані NEPTUN.
+    destination та presumptiveCourse не використовуємо,
+    бо вони не є базовими полями актуальної схеми Threats API.
+    """
+
     threat = item.get(
         "threat",
         item,
     )
 
     area_only = bool(
-        item.get("area_only")
-        or threat.get("areaOnly")
+        item.get("area_only", False)
+        or threat.get("areaOnly", False)
     )
 
     threat_type = normalize(
         threat.get("type")
     )
 
-    icons = {
-        "uav": "🛸",
-        "missile": "🚀",
-        "ballistic": "💥",
-        "kab": "💣",
-        "mig31k": "✈️",
-        "recon": "👀",
-        "fpv": "🛸",
-        "unknown": "❓",
-    }
-
-    icon = icons.get(
-        threat_type,
-        "❓",
+    type_name = get_threat_type_name(
+        threat
     )
 
-    title = (
-        threat.get("title")
-        or "Невідома загроза"
+    icon = get_threat_icon(
+        threat_type
+    )
+
+    locality = (
+        threat.get("locality")
+        or ""
     )
 
     region = (
@@ -698,11 +1278,6 @@ def format_threat(
         or ""
     )
 
-    locality = (
-        threat.get("locality")
-        or ""
-    )
-
     source_count = (
         threat.get("sourceCount")
         or 0
@@ -710,85 +1285,68 @@ def format_threat(
 
     confidence = (
         threat.get("confidenceLevel")
+        or threat.get("displayConfidence")
         or ""
     )
 
-    heading = threat.get(
-        "heading"
-    )
-
-    if heading is None:
-        velocity = threat.get(
-            "velocity"
-        )
-
-        if isinstance(velocity, dict):
-            heading = velocity.get(
-                "bearingDeg"
-            )
-
-    speed = None
-    velocity = threat.get(
-        "velocity"
-    )
-
-    if isinstance(velocity, dict):
-        speed = velocity.get(
-            "speedKmh"
-        )
-
-    explanation = (
-        threat.get("explanationShort")
+    updated_at = (
+        threat.get("updatedAt")
         or ""
     )
+
+    uncertainty = (
+        threat.get("uncertaintyKm")
+    )
+
+    position_quality = (
+        threat.get("positionQuality")
+        or ""
+    )
+
+    advisory = bool(
+        threat.get("advisory", False)
+    )
+
+    heading = ""
+    if not area_only and not advisory:
+        heading = get_heading_text(
+            threat.get("heading")
+        )
 
     text = (
-        f"{icon} <b>{title}</b>\n"
+        f"{icon} <b>Загроза: "
+        f"{type_name}</b>\n"
     )
+
+    if area_only:
+        text += (
+            "⚠️ <b>Точне місце загрози "
+            "не визначене.</b>\n"
+        )
+
+    if advisory:
+        text += (
+            "ℹ️ Інформаційне спостереження NEPTUN.\n"
+        )
+
+    if locality:
+        text += (
+            f"📍 Локація: <b>{locality}</b>\n"
+        )
+
+    if district:
+        text += (
+            f"🏙 Район: {district}\n"
+        )
 
     if region:
         text += (
-            f"🗺 Область: "
-            f"<b>{region}</b>\n"
+            f"🗺 Область: {region}\n"
         )
 
-    # areaOnly не дозволяє видавати координатний центр
-    # за точний населений пункт або район.
-    if not area_only and district:
+    if heading:
         text += (
-            f"📍 Район: "
-            f"<b>{district}</b>\n"
-        )
-
-    if not area_only and locality:
-        text += (
-            f"📌 Локація: "
-            f"<b>{locality}</b>\n"
-        )
-
-    heading_text = get_heading_text(
-        heading
-    )
-
-    if heading_text:
-        text += (
-            f"🧭 Напрямок: "
-            f"<b>{heading_text}</b>\n"
-        )
-
-    if speed is not None:
-        try:
-            text += (
-                f"💨 Швидкість: "
-                f"<b>{float(speed):.0f} км/год</b>\n"
-            )
-        except (TypeError, ValueError):
-            pass
-
-    if confidence:
-        text += (
-            f"📊 Достовірність: "
-            f"<b>{confidence}</b>\n"
+            f"🧭 Курс: <b>{heading}</b>\n"
         )
 
     if source_count:
@@ -797,15 +1355,54 @@ def format_threat(
             f"<b>{source_count}</b>\n"
         )
 
-    if explanation:
-        text += (
-            f"ℹ️ {explanation}\n"
+    if confidence:
+        confidence_names = {
+            "high": "висока",
+            "medium": "середня",
+            "low": "низька",
+        }
+
+        confidence_text = confidence_names.get(
+            normalize(confidence),
+            str(confidence),
         )
 
-    if area_only:
         text += (
-            "⚠️ Точне місце загрози "
-            "не визначене."
+            f"📊 Достовірність: "
+            f"<b>{confidence_text}</b>\n"
+        )
+
+    # Похибку можна показувати як якість координат,
+    # але НЕ перетворюємо її на відстань до користувача.
+    if (
+        uncertainty is not None
+        and not area_only
+    ):
+        try:
+            uncertainty_value = float(
+                uncertainty
+            )
+
+            text += (
+                f"🎯 Похибка позиції: "
+                f"≈ {uncertainty_value:.1f} км\n"
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    if position_quality:
+        text += (
+            f"📍 Якість позиції: "
+            f"<b>{position_quality}</b>\n"
+        )
+
+    if updated_at:
+        text += (
+            f"🕒 Оновлено: "
+            f"<code>{updated_at}</code>"
         )
 
     return text.rstrip()
@@ -948,10 +1545,11 @@ async def threats(
     )
 
     nearby_threats = (
-        find_relevant_threats(
+        find_nearby_threats(
             location,
             threats_data,
-            city_oblast,
+            city=city,
+            city_oblast=city_oblast,
         )
     )
 
@@ -962,7 +1560,7 @@ async def threats(
         f"oblast={city_oblast} | "
         f"active_raions="
         f"{len(active_oblast_raions)} | "
-        f"threats="
+        f"nearby="
         f"{len(nearby_threats)}"
     )
 
@@ -1038,11 +1636,12 @@ async def threats(
             )
 
     # =================================================
-    # АКТИВНІ ЗАГРОЗИ
+    # ЗАГРОЗИ ПОБЛИЗУ
     # =================================================
 
     text += (
-        "🛰 <b>АКТИВНІ ЗАГРОЗИ</b>\n"
+        "📡 <b>КОНКРЕТНІ ЗАГРОЗИ "
+        "ПОБЛИЗУ</b>\n"
     )
 
     if nearby_threats:
@@ -1063,11 +1662,26 @@ async def threats(
     else:
 
         text += (
-            "🟢 Активних загроз, "
-            "віднесених до вашої області, "
-            "не виявлено."
+            "🟢 Релевантних активних "
+            "загроз для цієї локації "
+            "за даними NEPTUN не виявлено."
         )
 
+    # =================================================
+    # ПОЯСНЕННЯ
+    # =================================================
+
+    if (
+        not city_alert
+        and active_oblast_raions
+    ):
+
+        text += (
+            "\n\nℹ️ <b>Важливо:</b> "
+            "тривога в іншому районі "
+            "області не означає автоматично "
+            f"тривогу в місті {city}."
+        )
 
     # =================================================
     # ФІНАЛ
@@ -1083,8 +1697,9 @@ async def threats(
     elif nearby_threats:
 
         text += (
-            "\n\n🟡 <b>У вашій області "
-            "зафіксовані активні загрози.</b>\n"
+            "\n\n🟡 <b>Є активна загроза, "
+            "адміністративно пов'язана "
+            "з вашою локацією.</b>\n"
             "Слідкуйте за офіційними "
             "повідомленнями."
         )
@@ -1110,15 +1725,9 @@ async def threats(
     # ВІДПРАВКА
     # =================================================
 
-    text += (
-        "\n\n"
-        "🔗 <a href=\"https://neptun.in.ua/\">NEPTUN</a>"
-    )
-
     await message.answer(
         text,
         parse_mode="HTML",
-        disable_web_page_preview=True,
     )
 
     print(
@@ -1128,6 +1737,6 @@ async def threats(
         f"oblast={city_oblast} | "
         f"oblast_raions="
         f"{len(active_oblast_raions)} | "
-        f"threats="
+        f"nearby="
         f"{len(nearby_threats)}"
     )
