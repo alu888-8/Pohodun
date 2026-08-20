@@ -1107,15 +1107,258 @@ def get_heading_text(
     )
 
 
+
+def calculate_bearing(
+    lat1,
+    lon1,
+    lat2,
+    lon2,
+):
+    """
+    Розраховує азимут від координат загрози
+    до координат потенційної цілі.
+    """
+
+    try:
+        lat1 = math.radians(float(lat1))
+        lon1 = math.radians(float(lon1))
+        lat2 = math.radians(float(lat2))
+        lon2 = math.radians(float(lon2))
+    except (TypeError, ValueError):
+        return None
+
+    dlon = lon2 - lon1
+
+    x = (
+        math.sin(dlon)
+        * math.cos(lat2)
+    )
+
+    y = (
+        math.cos(lat1)
+        * math.sin(lat2)
+        -
+        math.sin(lat1)
+        * math.cos(lat2)
+        * math.cos(dlon)
+    )
+
+    bearing = math.degrees(
+        math.atan2(x, y)
+    )
+
+    return (bearing + 360) % 360
+
+
+def angular_difference(
+    first,
+    second,
+):
+    """
+    Найменша різниця між двома азимутами.
+    """
+
+    try:
+        first = float(first) % 360
+        second = float(second) % 360
+    except (TypeError, ValueError):
+        return None
+
+    difference = abs(
+        first - second
+    )
+
+    return min(
+        difference,
+        360 - difference,
+    )
+
+
+def get_neptun_destination_coordinates(
+    destination,
+):
+    """
+    Отримує координати потенційної цілі через Neptun.
+
+    Якщо Neptun не знайшов населений пункт,
+    ціль не вважаємо підтвердженою.
+    """
+
+    if not destination:
+        return None, None
+
+    if isinstance(destination, dict):
+        destination_name = (
+            destination.get("name")
+            or destination.get("title")
+            or destination.get("locality")
+            or ""
+        )
+
+        latitude = (
+            destination.get("latitude")
+            or destination.get("lat")
+        )
+
+        longitude = (
+            destination.get("longitude")
+            or destination.get("lon")
+        )
+
+        if (
+            latitude is not None
+            and longitude is not None
+        ):
+            try:
+                return (
+                    float(latitude),
+                    float(longitude),
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                pass
+
+    else:
+        destination_name = str(
+            destination
+        ).strip()
+
+    if not destination_name:
+        return None, None
+
+    try:
+        city = find_city_location(
+            destination_name
+        )
+    except Exception as e:
+        print(
+            f"⚠️ Neptun destination error "
+            f"{destination_name}: {e}"
+        )
+        return None, None
+
+    if not city:
+        return None, None
+
+    latitude = (
+        city.get("latitude")
+        or city.get("lat")
+    )
+
+    longitude = (
+        city.get("longitude")
+        or city.get("lon")
+    )
+
+    if (
+        latitude is None
+        or longitude is None
+    ):
+        return None, None
+
+    try:
+        return (
+            float(latitude),
+            float(longitude),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None, None
+
+
+def is_destination_confirmed(
+    threat,
+    destination,
+):
+    """
+    Перевіряє destination через Neptun.
+
+    Якщо курс загрози та напрямок до destination
+    відрізняються більше ніж на 45°, ціль не
+    вважаємо підтвердженою.
+    """
+
+    if not destination:
+        return False
+
+    threat_lat = (
+        threat.get("latitude")
+        or threat.get("lat")
+    )
+
+    threat_lon = (
+        threat.get("longitude")
+        or threat.get("lon")
+    )
+
+    heading = threat.get(
+        "heading"
+    )
+
+    if (
+        threat_lat is None
+        or threat_lon is None
+        or heading is None
+    ):
+        return False
+
+    target_lat, target_lon = (
+        get_neptun_destination_coordinates(
+            destination
+        )
+    )
+
+    if (
+        target_lat is None
+        or target_lon is None
+    ):
+        return False
+
+    target_bearing = calculate_bearing(
+        threat_lat,
+        threat_lon,
+        target_lat,
+        target_lon,
+    )
+
+    if target_bearing is None:
+        return False
+
+    difference = angular_difference(
+        heading,
+        target_bearing,
+    )
+
+    if difference is None:
+        return False
+
+    print(
+        f"🎯 DESTINATION CHECK | "
+        f"destination={destination} | "
+        f"heading={float(heading):.0f}° | "
+        f"target_bearing={target_bearing:.0f}° | "
+        f"difference={difference:.1f}°"
+    )
+
+    return difference <= 45
+
 def format_threat(
     item,
 ):
     """
     Формує одну актуальну загрозу.
 
-    Відстань рахується до фактичних координат
-    об'єкта загрози. Поле locality показуємо
-    окремо як місце/ціль, яку повернув Threats API.
+    Правила:
+    - locality НЕ називаємо ціллю автоматично;
+    - destination показуємо як ціль тільки після
+      перевірки напрямку через Neptun;
+    - відстань беремо від координат локації до
+      фактичних координат загрози;
+    - якщо даних недостатньо — нічого не вигадуємо.
     """
 
     threat = item.get(
@@ -1126,6 +1369,11 @@ def format_threat(
     distance = item.get(
         "distance"
     )
+
+    if distance is None:
+        distance = item.get(
+            "_distance_km"
+        )
 
     threat_type = normalize(
         threat.get("type")
@@ -1163,16 +1411,12 @@ def format_threat(
         threat.get("heading")
     )
 
-    destination = threat.get(
-        "destination"
+    destination = (
+        threat.get("destination")
     )
 
-    presumptive_course = threat.get(
-        "presumptiveCourse"
-    )
-
-    uncertainty = threat.get(
-        "uncertaintyKm"
+    uncertainty = (
+        threat.get("uncertaintyKm")
     )
 
     confidence = (
@@ -1186,10 +1430,20 @@ def format_threat(
         or ""
     )
 
-    explanation = (
-        threat.get("explanationShort")
-        or ""
+    # =================================================
+    # ПЕРЕВІРКА ЦІЛІ ЧЕРЕЗ NEPTUN
+    # =================================================
+
+    destination_confirmed = (
+        is_destination_confirmed(
+            threat,
+            destination,
+        )
     )
+
+    # =================================================
+    # ПОЧАТОК
+    # =================================================
 
     text = (
         f"{icon} <b>Загроза: "
@@ -1197,25 +1451,53 @@ def format_threat(
     )
 
     # =================================================
-    # ЦІЛЬ / НАПРЯМОК
+    # ПІДТВЕРДЖЕНА ЦІЛЬ
+    # =================================================
+
+    if destination_confirmed:
+
+        if isinstance(
+            destination,
+            dict,
+        ):
+            destination_name = (
+                destination.get("name")
+                or destination.get("title")
+                or destination.get("locality")
+                or ""
+            )
+        else:
+            destination_name = str(
+                destination
+            ).strip()
+
+        if destination_name:
+
+            text += (
+                f"🎯 <b>Ціль: "
+                f"{destination_name}</b>\n"
+            )
+
+    # =================================================
+    # ЛОКАЦІЯ
+    #
+    # locality не називаємо ціллю,
+    # якщо destination не підтверджений.
     # =================================================
 
     if locality:
-        if destination:
-            text += (
-                f"🎯 <b>Ціль/напрямок: "
-                f"{locality}</b>\n"
-            )
-        else:
-            text += (
-                f"📍 {locality}\n"
-            )
+
+        text += (
+            f"📍 Локація: "
+            f"<b>{locality}</b>\n"
+        )
 
     # =================================================
     # РАЙОН
     # =================================================
 
     if district:
+
         text += (
             f"🏙 {district}\n"
         )
@@ -1225,16 +1507,19 @@ def format_threat(
     # =================================================
 
     if region:
+
         text += (
             f"🗺 {region}\n"
         )
 
     # =================================================
-    # ВІДСТАНЬ ДО ФАКТИЧНОЇ ПОЗИЦІЇ ЗАГРОЗИ
+    # ВІДСТАНЬ
     # =================================================
 
     if distance is not None:
+
         try:
+
             distance_value = float(
                 distance
             )
@@ -1248,34 +1533,21 @@ def format_threat(
             TypeError,
             ValueError,
         ):
+
             text += (
                 f"📏 Відстань до загрози: "
                 f"<b>{distance}</b>\n"
             )
 
     # =================================================
-    # КУРС
+    # ФАКТИЧНИЙ КУРС
     # =================================================
 
     if heading:
+
         text += (
             f"🧭 Курс: "
             f"<b>{heading}</b>\n"
-        )
-
-    # =================================================
-    # ДОДАТКОВИЙ НАПРЯМОК / ЦІЛЬ
-    # =================================================
-
-    if destination and not locality:
-        text += (
-            "🎯 <b>Визначено напрямок/ціль</b>\n"
-        )
-
-    elif presumptive_course:
-        text += (
-            "🧭 Курс визначений "
-            "орієнтовно\n"
         )
 
     # =================================================
@@ -1283,6 +1555,7 @@ def format_threat(
     # =================================================
 
     if source_count:
+
         text += (
             f"🔎 Підтверджень: "
             f"<b>{source_count}</b>\n"
@@ -1293,6 +1566,7 @@ def format_threat(
     # =================================================
 
     if confidence:
+
         confidence_names = {
             "high": "висока",
             "medium": "середня",
@@ -1316,7 +1590,9 @@ def format_threat(
     # =================================================
 
     if uncertainty is not None:
+
         try:
+
             uncertainty_value = float(
                 uncertainty
             )
@@ -1330,22 +1606,15 @@ def format_threat(
             TypeError,
             ValueError,
         ):
+
             pass
-
-    # =================================================
-    # ПОЯСНЕННЯ
-    # =================================================
-
-    if explanation:
-        text += (
-            f"ℹ️ {explanation}\n"
-        )
 
     # =================================================
     # ЧАС ОНОВЛЕННЯ
     # =================================================
 
     if updated_at:
+
         text += (
             f"🕒 Оновлено: "
             f"<code>{updated_at}</code>"
