@@ -1,7 +1,7 @@
 import asyncio
 
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -31,6 +31,18 @@ from app.handlers.threats import (
 
 
 router = Router()
+
+
+# =====================================================
+# КЛАВІАТУРА AI-ЧАТУ
+# =====================================================
+
+ai_chat_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="⬅️ Назад")]
+    ],
+    resize_keyboard=True,
+)
 
 
 # =====================================================
@@ -434,6 +446,7 @@ async def start_ai_chat(
         "Щоб вийти з AI-чату, натисни "
         "«⬅️ Назад».",
         parse_mode="HTML",
+        reply_markup=ai_chat_keyboard,
     )
 
 
