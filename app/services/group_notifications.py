@@ -12,10 +12,7 @@ from app.services.threats import get_threats
 from app.services.weather import get_weather
 from app.services.advice import get_advice
 from app.services import ai_joke
-from app.services.day_facts import (
-    get_day_facts,
-    _city_coordinates,
-)
+from app.services.day_facts import get_day_facts
 
 from app.database.db import (
     get_scheduler_last_run,
@@ -1490,21 +1487,9 @@ async def send_morning_weather(
 
             try:
 
-                coordinates = _city_coordinates(
-                    city
-                )
-
-                weather_query = city
-
-                if coordinates:
-                    lat, lon = coordinates
-                    weather_query = (
-                        f"{lat},{lon}"
-                    )
-
                 weather = await asyncio.to_thread(
                     get_weather,
-                    weather_query,
+                    city,
                 )
 
                 if not weather:
@@ -1536,7 +1521,7 @@ async def send_morning_weather(
 
                 icon = get_weather_icon(
                     weather.get(
-                        "condition"
+                        "weather"
                     )
                 )
 
@@ -1544,13 +1529,11 @@ async def send_morning_weather(
                     "🌅 <b>Доброго ранку!</b>\n\n"
                     f"📍 <b>{city}</b>\n\n"
                     f"{icon} "
-                    f"{weather.get('condition', 'Невідомо')}\n"
+                    f"{weather.get('description', '')}\n"
                     f"🌡 Температура: "
-                    f"{weather.get('temp', '—')}°C\n"
-                    f"🌡 Відчувається як: "
-                    f"{weather.get('feels_like', '—')}°C\n"
+                    f"{weather.get('temperature', '—')}°C\n"
                     f"💨 Вітер: "
-                    f"{weather.get('wind', '—')} м/с\n"
+                    f"{weather.get('wind_speed', '—')} м/с\n"
                     f"💧 Вологість: "
                     f"{weather.get('humidity', '—')}%"
                     f"{advice}"
