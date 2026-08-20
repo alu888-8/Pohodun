@@ -31,7 +31,7 @@ from app.utils.weather_icons import get_weather_icon
 # НАЛАШТУВАННЯ
 # =====================================================
 
-GROUP_CHAT_ID = -493936504
+GROUP_CHAT_ID = None
 
 KYIV_TIMEZONE = ZoneInfo("Europe/Kyiv")
 
@@ -55,6 +55,21 @@ async def send_to_group(
     bot: Bot,
     text: str,
 ):
+    # =================================================
+    # ГРУПА НЕ ПІДКЛЮЧЕНА
+    #
+    # Стару групу відв'язано.
+    # Після створення нової групи достатньо
+    # вказати її chat_id у GROUP_CHAT_ID.
+    # =================================================
+
+    if not GROUP_CHAT_ID:
+        print(
+            "ℹ️ GROUP NOTIFICATIONS | "
+            "група не підключена"
+        )
+        return
+
     try:
         await bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -62,10 +77,14 @@ async def send_to_group(
             parse_mode="HTML",
         )
 
-        print("✅ Повідомлення відправлено в групу")
+        print(
+            "✅ Повідомлення відправлено в групу"
+        )
 
     except Exception as e:
-        print(f"❌ Помилка відправки в групу: {e}")
+        print(
+            f"❌ Помилка відправки в групу: {e}"
+        )
 
 
 # =====================================================
