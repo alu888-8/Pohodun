@@ -31,7 +31,7 @@ from app.utils.weather_icons import get_weather_icon
 # НАЛАШТУВАННЯ
 # =====================================================
 
-GROUP_CHAT_ID = None
+GROUP_CHAT_ID = -5561223347
 
 KYIV_TIMEZONE = ZoneInfo("Europe/Kyiv")
 
