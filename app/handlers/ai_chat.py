@@ -21,7 +21,7 @@ from app.services.threats import (
 )
 
 from app.handlers.threats import (
-    find_relevant_threats,
+    find_nearby_threats,
     get_city_alert_status,
     get_city_oblast,
     get_active_oblast_raions,
@@ -242,7 +242,7 @@ async def get_threats_for_ai(
     )
 
     nearby_threats = (
-        find_relevant_threats(
+        find_nearby_threats(
             location,
             threats_data,
             city_oblast,
