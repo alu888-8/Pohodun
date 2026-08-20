@@ -1,3 +1,4 @@
+import time
 import requests
 
 from config import OPENROUTER_API_KEY
@@ -12,10 +13,9 @@ OPENROUTER_URL = (
 # МОДЕЛІ
 # =====================================================
 #
-# Перша — автоматичний вибір доступної безкоштовної
-# моделі OpenRouter.
-#
-# Якщо вона тимчасово недоступна — пробуємо резервні.
+# Порядок важливий:
+# 1. автоматичний вибір безкоштовної моделі;
+# 2. резервні безкоштовні моделі.
 #
 
 MODELS = [
@@ -24,6 +24,21 @@ MODELS = [
     "qwen/qwen3-30b-a3b:free",
     "meta-llama/llama-3.3-8b-instruct:free",
 ]
+
+
+# =====================================================
+# НАЛАШТУВАННЯ ПОВТОРІВ
+# =====================================================
+
+# Скільки разів повторювати запит до тієї самої моделі
+# при тимчасовій помилці.
+MAX_RETRIES_PER_MODEL = 2
+
+# Базова пауза між повторними спробами.
+RETRY_DELAY_SECONDS = 2
+
+# Максимальна довжина відповіді.
+MAX_TOKENS = 500
 
 
 # =====================================================
@@ -132,10 +147,8 @@ def _request_model(
     model: str,
     question: str,
 ):
-
     payload = {
         "model": model,
-
         "messages": [
             {
                 "role": "system",
@@ -146,13 +159,9 @@ def _request_model(
                 "content": question,
             },
         ],
-
         "temperature": 0.4,
-
-        "max_tokens": 500,
-
+        "max_tokens": MAX_TOKENS,
         "frequency_penalty": 0.2,
-
         "presence_penalty": 0.0,
     }
 
@@ -160,15 +169,12 @@ def _request_model(
         "Authorization": (
             f"Bearer {OPENROUTER_API_KEY}"
         ),
-
         "Content-Type": (
             "application/json"
         ),
-
         "HTTP-Referer": (
             "https://github.com/alu888-8/Pohodun"
         ),
-
         "X-Title": "Pohodun",
     }
 
@@ -178,6 +184,129 @@ def _request_model(
         json=payload,
         timeout=(5, 45),
     )
+
+
+# =====================================================
+# RETRY-AFTER
+# =====================================================
+
+def _get_retry_delay(response, attempt):
+    """
+    Якщо OpenRouter передав Retry-After — використовуємо його.
+    Інакше використовуємо коротку експоненціальну паузу.
+    """
+
+    retry_after = response.headers.get(
+        "Retry-After"
+    )
+
+    if retry_after:
+        try:
+            value = float(
+                retry_after
+            )
+
+            # Не зависаємо на дуже великому значенні.
+            return min(
+                max(value, 1.0),
+                15.0,
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    return min(
+        RETRY_DELAY_SECONDS * attempt,
+        6,
+    )
+
+
+# =====================================================
+# ПЕРЕВІРКА ВІДПОВІДІ
+# =====================================================
+
+def _extract_answer(data):
+    if not isinstance(
+        data,
+        dict,
+    ):
+        return None
+
+    choices = data.get(
+        "choices",
+        [],
+    )
+
+    if not choices:
+        return None
+
+    first = choices[0]
+
+    if not isinstance(
+        first,
+        dict,
+    ):
+        return None
+
+    message = first.get(
+        "message",
+        {},
+    )
+
+    if not isinstance(
+        message,
+        dict,
+    ):
+        return None
+
+    answer = message.get(
+        "content"
+    )
+
+    if answer is None:
+        return None
+
+    # Деякі провайдери можуть повернути список
+    # контент-блоків замість звичайного рядка.
+    if isinstance(
+        answer,
+        list,
+    ):
+        parts = []
+
+        for item in answer:
+            if isinstance(
+                item,
+                dict,
+            ):
+                part = item.get(
+                    "text"
+                )
+
+                if part:
+                    parts.append(
+                        str(part)
+                    )
+            elif item:
+                parts.append(
+                    str(item)
+                )
+
+        answer = "".join(
+            parts
+        )
+
+    answer = str(
+        answer
+    ).strip()
+
+    if not answer:
+        return None
+
+    return answer
 
 
 # =====================================================
@@ -224,148 +353,252 @@ def ask_ai(question: str):
     # ПРОБУЄМО МОДЕЛІ
     # =================================================
 
-    for index, model in enumerate(
+    for model_index, model in enumerate(
         MODELS,
         start=1,
     ):
 
         print(
-            f"🤖 AI MODEL {index}/"
+            f"🤖 AI MODEL {model_index}/"
             f"{len(MODELS)} | "
             f"{model}"
         )
 
-        try:
-
-            response = _request_model(
-                model,
-                question,
-            )
-
-        except requests.Timeout:
+        for attempt in range(
+            1,
+            MAX_RETRIES_PER_MODEL + 1,
+        ):
 
             print(
-                f"⏱️ AI TIMEOUT | "
-                f"{model}"
+                f"🔄 AI ATTEMPT | "
+                f"model={model} | "
+                f"attempt={attempt}/"
+                f"{MAX_RETRIES_PER_MODEL}"
             )
-
-            continue
-
-        except requests.RequestException as e:
-
-            print(
-                f"❌ AI NETWORK ERROR | "
-                f"{model} | {e}"
-            )
-
-            continue
-
-        except Exception as e:
-
-            print(
-                f"❌ AI REQUEST ERROR | "
-                f"{model} | "
-                f"{type(e).__name__}: {e}"
-            )
-
-            continue
-
-        # =================================================
-        # СТАТУС
-        # =================================================
-
-        print(
-            f"🤖 AI RESPONSE | "
-            f"model={model} | "
-            f"status={response.status_code}"
-        )
-
-        # =================================================
-        # УСПІШНА ВІДПОВІДЬ
-        # =================================================
-
-        if response.status_code == 200:
 
             try:
 
-                data = response.json()
+                response = _request_model(
+                    model,
+                    question,
+                )
+
+            except requests.Timeout:
+
+                print(
+                    f"⏱️ AI TIMEOUT | "
+                    f"{model} | "
+                    f"attempt={attempt}"
+                )
+
+                if attempt < MAX_RETRIES_PER_MODEL:
+                    time.sleep(
+                        RETRY_DELAY_SECONDS
+                        * attempt
+                    )
+
+                continue
+
+            except requests.RequestException as e:
+
+                print(
+                    f"❌ AI NETWORK ERROR | "
+                    f"{model} | {e}"
+                )
+
+                if attempt < MAX_RETRIES_PER_MODEL:
+                    time.sleep(
+                        RETRY_DELAY_SECONDS
+                        * attempt
+                    )
+
+                continue
 
             except Exception as e:
 
                 print(
-                    f"❌ AI JSON ERROR | "
-                    f"{model} | {e}"
+                    f"❌ AI REQUEST ERROR | "
+                    f"{model} | "
+                    f"{type(e).__name__}: {e}"
                 )
 
-                continue
-
-            choices = data.get(
-                "choices",
-                [],
-            )
-
-            if not choices:
-
-                print(
-                    f"❌ AI EMPTY CHOICES | "
-                    f"{model}"
-                )
-
-                continue
-
-            message = choices[0].get(
-                "message",
-                {},
-            )
-
-            answer = message.get(
-                "content"
-            )
-
-            if not answer:
-
-                print(
-                    f"❌ AI EMPTY CONTENT | "
-                    f"{model}"
-                )
-
-                continue
-
-            answer = str(
-                answer
-            ).strip()
-
-            if not answer:
-
-                print(
-                    f"❌ AI EMPTY ANSWER | "
-                    f"{model}"
-                )
-
-                continue
+                break
 
             print(
-                f"✅ AI SUCCESS | "
+                f"🤖 AI RESPONSE | "
                 f"model={model} | "
-                f"length={len(answer)}"
+                f"status={response.status_code}"
             )
 
-            return answer
+            # =================================================
+            # 200
+            # =================================================
 
-        # =================================================
-        # 401 / 403
-        #
-        # Це вже не проблема конкретної моделі.
-        # Зазвичай проблема з API key / account.
-        # =================================================
+            if response.status_code == 200:
 
-        if response.status_code in (
-            401,
-            403,
-        ):
+                try:
+                    data = response.json()
+
+                except Exception as e:
+
+                    print(
+                        f"❌ AI JSON ERROR | "
+                        f"{model} | {e}"
+                    )
+
+                    if attempt < MAX_RETRIES_PER_MODEL:
+                        time.sleep(
+                            RETRY_DELAY_SECONDS
+                            * attempt
+                        )
+
+                    continue
+
+                answer = _extract_answer(
+                    data
+                )
+
+                if not answer:
+
+                    print(
+                        f"❌ AI EMPTY ANSWER | "
+                        f"{model}"
+                    )
+
+                    if attempt < MAX_RETRIES_PER_MODEL:
+                        time.sleep(
+                            RETRY_DELAY_SECONDS
+                            * attempt
+                        )
+
+                    continue
+
+                print(
+                    f"✅ AI SUCCESS | "
+                    f"model={model} | "
+                    f"length={len(answer)}"
+                )
+
+                return answer
+
+            # =================================================
+            # 401 / 403
+            # =================================================
+
+            if response.status_code in (
+                401,
+                403,
+            ):
+
+                print(
+                    f"❌ AI AUTH ERROR | "
+                    f"status={response.status_code} | "
+                    f"model={model}"
+                )
+
+                print(
+                    f"❌ OpenRouter response | "
+                    f"{response.text}"
+                )
+
+                return (
+                    "❌ Помилка доступу до AI. "
+                    "Перевір API-ключ OpenRouter."
+                )
+
+            # =================================================
+            # 429
+            # =================================================
+
+            if response.status_code == 429:
+
+                print(
+                    f"⚠️ AI RATE LIMIT | "
+                    f"{model} | "
+                    f"attempt={attempt}"
+                )
+
+                print(
+                    f"⚠️ OpenRouter response | "
+                    f"{response.text}"
+                )
+
+                if attempt < MAX_RETRIES_PER_MODEL:
+
+                    delay = _get_retry_delay(
+                        response,
+                        attempt,
+                    )
+
+                    print(
+                        f"⏳ AI RETRY | "
+                        f"model={model} | "
+                        f"через {delay:.1f} сек."
+                    )
+
+                    time.sleep(
+                        delay
+                    )
+
+                    continue
+
+                # Ця модель не відповіла —
+                # переходимо до наступної.
+                break
+
+            # =================================================
+            # 408 / 409 / 425 / 5XX
+            #
+            # Тимчасові помилки.
+            # =================================================
+
+            if (
+                response.status_code in (
+                    408,
+                    409,
+                    425,
+                )
+                or response.status_code >= 500
+            ):
+
+                print(
+                    f"⚠️ AI TEMP ERROR | "
+                    f"status={response.status_code} | "
+                    f"{model}"
+                )
+
+                print(
+                    f"⚠️ OpenRouter response | "
+                    f"{response.text}"
+                )
+
+                if attempt < MAX_RETRIES_PER_MODEL:
+
+                    delay = _get_retry_delay(
+                        response,
+                        attempt,
+                    )
+
+                    print(
+                        f"⏳ AI RETRY | "
+                        f"model={model} | "
+                        f"через {delay:.1f} сек."
+                    )
+
+                    time.sleep(
+                        delay
+                    )
+
+                    continue
+
+                break
+
+            # =================================================
+            # ІНША ПОМИЛКА
+            # =================================================
 
             print(
-                f"❌ AI AUTH ERROR | "
+                f"❌ AI ERROR | "
                 f"status={response.status_code} | "
                 f"model={model}"
             )
@@ -375,69 +608,9 @@ def ask_ai(question: str):
                 f"{response.text}"
             )
 
-            return (
-                "❌ Помилка доступу до AI. "
-                "Перевір API-ключ OpenRouter."
-            )
-
-        # =================================================
-        # 429
-        #
-        # Модель перевантажена або rate limit.
-        # Переходимо до наступної.
-        # =================================================
-
-        if response.status_code == 429:
-
-            print(
-                f"⚠️ AI RATE LIMIT | "
-                f"{model} | "
-                "переходимо до наступної моделі"
-            )
-
-            print(
-                f"⚠️ OpenRouter response | "
-                f"{response.text}"
-            )
-
-            continue
-
-        # =================================================
-        # 5XX
-        #
-        # Тимчасова помилка провайдера.
-        # Переходимо до наступної моделі.
-        # =================================================
-
-        if response.status_code >= 500:
-
-            print(
-                f"⚠️ AI PROVIDER ERROR | "
-                f"status={response.status_code} | "
-                f"{model}"
-            )
-
-            print(
-                f"⚠️ OpenRouter response | "
-                f"{response.text}"
-            )
-
-            continue
-
-        # =================================================
-        # ІНША ПОМИЛКА
-        # =================================================
-
-        print(
-            f"❌ AI ERROR | "
-            f"status={response.status_code} | "
-            f"model={model}"
-        )
-
-        print(
-            f"❌ OpenRouter response | "
-            f"{response.text}"
-        )
+            # Для невідомої помилки немає сенсу
+            # повторювати ту саму модель.
+            break
 
     # =====================================================
     # ВСІ МОДЕЛІ НЕ СПРАЦЮВАЛИ
@@ -449,7 +622,6 @@ def ask_ai(question: str):
     )
 
     return (
-        "❌ Зараз AI тимчасово "
-        "недоступний. Спробуй ще раз "
-        "через кілька секунд."
+        "❌ Зараз AI перевантажений. "
+        "Спробуй ще раз через кілька секунд."
     )
