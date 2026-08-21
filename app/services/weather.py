@@ -11,9 +11,21 @@ def get_weather(city=None):
     if city is None:
         city = DEFAULT_CITY
 
+    # Для WeatherAPI використовуємо координати,
+    # якщо місто є в нашому довіднику.
+    try:
+        from app.data.cities import CITY_API
+
+        weather_query = CITY_API.get(
+            city,
+            city,
+        )
+    except Exception:
+        weather_query = city
+
     params = {
         "key": WEATHER_API_KEY,
-        "q": city,
+        "q": weather_query,
         "lang": "uk",
     }
 
