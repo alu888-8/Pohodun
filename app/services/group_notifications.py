@@ -114,7 +114,7 @@ def normalize(value):
 def get_users_locations():
     try:
         conn = sqlite3.connect(
-            "app/database/users.db"
+            "/app/database/users.db"
         )
 
         cursor = conn.cursor()
@@ -1467,7 +1467,7 @@ async def send_morning_weather(
 
     try:
         conn = sqlite3.connect(
-            "app/database/users.db"
+            "/app/database/users.db"
         )
 
         cursor = conn.cursor()
@@ -1599,7 +1599,7 @@ async def send_morning_day_facts(
     try:
 
         conn = sqlite3.connect(
-            "app/database/users.db"
+            "/app/database/users.db"
         )
 
         cursor = conn.cursor()
