@@ -1130,9 +1130,24 @@ def format_alert_start(
         seen = set()
 
         for threat in threats:
-            title = (
-                threat.get("title")
-                or "Невідома загроза"
+            threat_type = normalize(
+                threat.get("type")
+            )
+
+            threat_type_names = {
+                "uav": "БпЛА",
+                "missile": "ракета",
+                "ballistic": "балістика",
+                "kab": "КАБ",
+                "mig31k": "МіГ-31К",
+                "recon": "розвідувальна загроза",
+                "fpv": "FPV-дрон",
+                "unknown": "невідома загроза",
+            }
+
+            title = threat_type_names.get(
+                threat_type,
+                "невідома загроза",
             )
 
             locality = (
