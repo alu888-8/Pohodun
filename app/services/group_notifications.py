@@ -15,6 +15,7 @@ from app.services import ai_joke
 from app.services.day_facts import get_day_facts
 
 from app.database.db import (
+    get_connection,
     get_scheduler_last_run,
     set_scheduler_last_run,
 )
@@ -113,9 +114,7 @@ def normalize(value):
 
 def get_users_locations():
     try:
-        conn = sqlite3.connect(
-            "/app/database/users.db"
-        )
+        conn = get_connection()
 
         cursor = conn.cursor()
 
@@ -1359,20 +1358,47 @@ async def group_alert_monitor(
                     alert_active
                     and not previous_state
                 ):
-                    threats_data = (
-                        await asyncio.to_thread(
-                            get_threats
-                        )
-                    )
+                    # =================================================
+                    # ОТРИМУЄМО АКТУАЛЬНІ ЗАГРОЗИ
+                    #
+                    # Alerts API може оновитися раніше за
+                    # Threats API, тому робимо до 3 спроб.
+                    # =================================================
 
-                    location_threats = (
-                        get_location_threats(
-                            location,
-                            threats_data,
+                    location_threats = []
+
+                    for attempt in range(3):
+
+                        threats_data = (
+                            await asyncio.to_thread(
+                                get_threats
+                            )
                         )
-                        if threats_data
-                        else []
-                    )
+
+                        location_threats = (
+                            get_location_threats(
+                                location,
+                                threats_data,
+                            )
+                            if threats_data
+                            else []
+                        )
+
+                        if location_threats:
+                            print(
+                                f"🎯 Загрози знайдені "
+                                f"з {attempt + 1}-ї спроби"
+                            )
+                            break
+
+                        if attempt < 2:
+                            print(
+                                "⏳ Загроз поблизу поки "
+                                "не знайдено — повторна "
+                                "перевірка через 2 секунди"
+                            )
+
+                            await asyncio.sleep(2)
 
                     await send_to_group(
                         bot,
@@ -1481,9 +1507,7 @@ async def send_morning_weather(
     )
 
     try:
-        conn = sqlite3.connect(
-            "/app/database/users.db"
-        )
+        conn = get_connection()
 
         cursor = conn.cursor()
 
@@ -1537,7 +1561,12 @@ async def send_morning_weather(
                 try:
 
                     advice_result = get_advice(
-                        weather
+                        weather.get("temp"),
+                        weather.get("condition", ""),
+                        city,
+                        weather.get("feels_like"),
+                        weather.get("wind"),
+                        weather.get("humidity"),
                     )
 
                     if advice_result:
@@ -1555,7 +1584,7 @@ async def send_morning_weather(
 
                 icon = get_weather_icon(
                     weather.get(
-                        "weather"
+                        "condition"
                     )
                 )
 
@@ -1563,11 +1592,11 @@ async def send_morning_weather(
                     "🌅 <b>Доброго ранку!</b>\n\n"
                     f"📍 <b>{city}</b>\n\n"
                     f"{icon} "
-                    f"{weather.get('description', '')}\n"
+                    f"{weather.get('condition', '')}\n"
                     f"🌡 Температура: "
-                    f"{weather.get('temperature', '—')}°C\n"
+                    f"{weather.get('temp', '—')}°C\n"
                     f"💨 Вітер: "
-                    f"{weather.get('wind_speed', '—')} м/с\n"
+                    f"{weather.get('wind', '—')} м/с\n"
                     f"💧 Вологість: "
                     f"{weather.get('humidity', '—')}%"
                     f"{advice}"
@@ -1613,9 +1642,7 @@ async def send_morning_day_facts(
 
     try:
 
-        conn = sqlite3.connect(
-            "/app/database/users.db"
-        )
+        conn = get_connection()
 
         cursor = conn.cursor()
 
@@ -1707,7 +1734,44 @@ async def send_morning_content(
     )
 
     # -------------------------------------------------
-    # 1. ПОГОДА
+    # 1. ДОБРОГО РАНКУ
+    # -------------------------------------------------
+
+    try:
+
+        morning_text = get_morning_joke()
+
+        if morning_text:
+
+            if not morning_text.startswith(
+                "☀️ Доброго ранку!"
+            ):
+
+                morning_text = (
+                    "☀️ <b>Доброго ранку!</b>\n\n"
+                    f"{morning_text}"
+                )
+
+            await send_to_group(
+                bot,
+                morning_text,
+            )
+
+            print(
+                "✅ «Доброго ранку» "
+                "відправлено"
+            )
+
+            await asyncio.sleep(1)
+
+    except Exception as e:
+
+        print(
+            f"❌ Помилка «Доброго ранку»: {e}"
+        )
+
+    # -------------------------------------------------
+    # 2. ПОГОДА
     # -------------------------------------------------
 
     await send_morning_weather(
@@ -1715,7 +1779,7 @@ async def send_morning_content(
     )
 
     # -------------------------------------------------
-    # 2. Є ЩО СКАЗАТИ
+    # 3. Є ЩО СКАЗАТИ
     # -------------------------------------------------
 
     await send_morning_day_facts(
