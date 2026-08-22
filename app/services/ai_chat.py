@@ -290,6 +290,24 @@ def _extract_answer(data):
         answer
     ).strip()
 
+    # -------------------------------------------------
+    # Видаляємо службові safety-маркери моделі.
+    # -------------------------------------------------
+
+    safety_markers = (
+        "User Safety: safe",
+        "User safety: safe",
+        "USER SAFETY: SAFE",
+    )
+
+    for marker in safety_markers:
+        if answer.startswith(marker):
+            answer = answer[len(marker):].lstrip(
+                " \n:-"
+            )
+
+    # Якщо модель повернула тільки службовий
+    # safety-рядок — відповіді немає.
     if not answer:
         return None
 
@@ -359,6 +377,9 @@ def _is_gibberish(
         "тебя",
         "тебе",
         "можешь",
+        "хочешь",
+        "что",
+        "ты",
         "можно",
         "будешь",
         "буду",
@@ -393,7 +414,7 @@ def _is_gibberish(
         )
     )
 
-    if russian_matches >= 2:
+    if russian_matches >= 1:
         print(
             "⚠️ AI VALIDATION | "
             f"Russian language detected | markers={russian_matches}"
