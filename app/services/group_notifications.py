@@ -23,6 +23,7 @@ from app.database.db import (
 from app.services.neptun_locations import (
     find_city_location,
     find_raion,
+    find_raion_by_coordinates,
 )
 
 from app.utils.weather_icons import get_weather_icon
@@ -916,6 +917,22 @@ def get_location_threats(
     location,
     data,
 ):
+    """
+    Визначення загроз без радіуса.
+
+    Джерело загроз:
+        Threats API
+
+    Для звичайних міст:
+        - пряма загроза locality == місто;
+        - або загроза знаходиться в тому самому
+          районі NEPTUN.
+
+    Для Києва:
+        - пряма загроза locality == Київ;
+        - kyiv-city не має окремого району NEPTUN.
+    """
+
     if not data:
         return []
 
@@ -927,32 +944,33 @@ def get_location_threats(
     if not threats:
         return []
 
-    latitude, longitude = (
-        get_location_coordinates(
-            location
-        )
+    city_name = normalize(
+        location.get("name")
+        or location.get("city")
+        or ""
     )
 
-    if (
-        latitude is None
-        or longitude is None
-    ):
-        print(
-            f"⚠️ Немає координат для "
-            f"{location.get('name')}"
-        )
+    location_raion = normalize(
+        location.get("raion_key")
+        or ""
+    )
 
-        return []
+    location_oblast = normalize(
+        location.get("oblast_key")
+        or ""
+    )
 
     print(
-        f"📍 ALERT THREAT LOCATION | "
+        f"📍 THREAT MATCH | "
         f"{location.get('name')} | "
-        f"{latitude}, {longitude}"
+        f"raion={location_raion or 'NONE'} | "
+        f"oblast={location_oblast or 'NONE'}"
     )
 
     result = []
 
     for threat in threats:
+
         if not isinstance(
             threat,
             dict,
@@ -961,6 +979,7 @@ def get_location_threats(
 
         status = normalize(
             threat.get("status")
+            or ""
         )
 
         if status not in (
@@ -970,38 +989,84 @@ def get_location_threats(
         ):
             continue
 
-        threat_lat = threat.get(
-            "latitude"
+        locality = normalize(
+            threat.get("locality")
+            or ""
         )
 
-        if threat_lat is None:
-            threat_lat = threat.get(
-                "lat"
+        # =================================================
+        # 1. ПРЯМА ЗАГРОЗА МІСТУ
+        # =================================================
+
+        if locality == city_name:
+
+            threat_copy = dict(
+                threat
             )
 
-        threat_lon = threat.get(
-            "longitude"
-        )
+            threat_copy[
+                "_threat_raion"
+            ] = location_raion
 
-        if threat_lon is None:
-            threat_lon = threat.get(
-                "lon"
+            threat_copy[
+                "_threat_oblast"
+            ] = location_oblast
+
+            result.append(
+                threat_copy
             )
 
-        if (
-            threat_lat is None
-            or threat_lon is None
+            print(
+                f"🎯 THREAT MATCH | "
+                f"{city_name} ← "
+                f"{threat.get('type')} | "
+                f"{threat.get('title')} | "
+                f"{locality}"
+            )
+
+            continue
+
+        # =================================================
+        # 2. КИЇВ
+        #
+        # У NEPTUN Київ має kyiv-city,
+        # але окремого району немає.
+        #
+        # Тому для Києва НЕ беремо:
+        # - Київську область;
+        # - Бориспільський район;
+        # - Броварський район;
+        # - будь-який інший район області.
+        #
+        # Тільки locality == Київ.
+        # =================================================
+
+        if city_name in (
+            "київ",
+            "kyiv",
         ):
+
+            # Київ не має raion_key у NEPTUN.
+            # Якщо locality не Київ — загрозу
+            # для Києва не вважаємо підтвердженою.
+            continue
+
+        # =================================================
+        # 3. ІНШІ МІСТА
+        #
+        # Визначаємо район загрози по координатах
+        # через геометрію NEPTUN.
+        # =================================================
+
+        lat = threat.get("lat")
+        lon = threat.get("lon")
+
+        if lat is None or lon is None:
             continue
 
         try:
-            threat_lat = float(
-                threat_lat
-            )
-
-            threat_lon = float(
-                threat_lon
-            )
+            lat = float(lat)
+            lon = float(lon)
 
         except (
             TypeError,
@@ -1009,79 +1074,86 @@ def get_location_threats(
         ):
             continue
 
-        distance = distance_km(
-            latitude,
-            longitude,
-            threat_lat,
-            threat_lon,
+        try:
+            threat_raion = (
+                find_raion_by_coordinates(
+                    lat,
+                    lon,
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Помилка визначення району "
+                f"{locality}: {e}"
+            )
+
+            continue
+
+        if not threat_raion:
+            print(
+                f"⚠️ Не вдалося визначити район "
+                f"загрози: {locality}"
+            )
+            continue
+
+        threat_raion_key = normalize(
+            threat_raion.get("key")
+            or ""
         )
 
-        if distance is None:
-            continue
+        threat_oblast_key = normalize(
+            threat_raion.get("oblast_key")
+            or ""
+        )
 
-        if distance > THREAT_RADIUS_KM:
-            continue
+        # =================================================
+        # ЗБЕРІГАЄМО ДАНІ NEPTUN
+        # =================================================
 
         threat_copy = dict(
             threat
         )
 
         threat_copy[
-            "_distance_km"
-        ] = distance
+            "_threat_raion"
+        ] = threat_raion_key
 
-        result.append(
-            threat_copy
-        )
+        threat_copy[
+            "_threat_oblast"
+        ] = threat_oblast_key
 
-        print(
-            f"🎯 THREAT NEAR "
-            f"{location.get('name')}: "
-            f"{threat.get('title')} | "
-            f"{threat.get('locality')} | "
-            f"{distance:.1f} км"
-        )
+        # =================================================
+        # ЗАГРОЗА В ТОМУ САМОМУ РАЙОНІ
+        # =================================================
 
-    result.sort(
-        key=lambda item: item.get(
-            "_distance_km",
-            999999,
-        )
-    )
+        if (
+            location_raion
+            and
+            threat_raion_key
+            == location_raion
+        ):
 
-    unique = []
-    seen = set()
-
-    for threat in result:
-        threat_id = (
-            threat.get("id")
-            or (
-                threat.get("title"),
-                threat.get("locality"),
-                threat.get("lat"),
-                threat.get("lon"),
+            result.append(
+                threat_copy
             )
-        )
 
-        if threat_id in seen:
-            continue
-
-        seen.add(
-            threat_id
-        )
-
-        unique.append(
-            threat
-        )
+            print(
+                f"🎯 THREAT MATCH | "
+                f"{city_name} ← "
+                f"{threat.get('type')} | "
+                f"{threat.get('title')} | "
+                f"{locality} | "
+                f"район={threat_raion_key}"
+            )
 
     print(
-        f"📡 Загроз поблизу "
-        f"{location.get('name')}: "
-        f"{len(unique)}"
+        f"📡 Загроз для {location.get('name')}: "
+        f"{len(result)}"
     )
 
-    return unique
-
+    return result
 
 # =====================================================
 # ІКОНКА ЗАГРОЗИ
