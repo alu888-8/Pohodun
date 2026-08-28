@@ -1833,177 +1833,175 @@ async def send_morning_content(
         "🌅 Початок ранкової розсилки"
     )
 
-    # -------------------------------------------------
-    # 1. ДОБРОГО РАНКУ
-    # -------------------------------------------------
-
     try:
+        conn = get_connection()
+        cursor = conn.cursor()
 
-        morning_text = get_morning_joke()
+        cursor.execute("""
+            SELECT DISTINCT city
+            FROM users
+            WHERE city IS NOT NULL
+              AND city != ''
+        """)
 
-        if morning_text:
+        rows = cursor.fetchall()
+        conn.close()
 
-            if not morning_text.startswith(
-                "☀️ Доброго ранку!"
-            ):
+        cities = [
+            row[0]
+            for row in rows
+            if row[0]
+        ]
 
-                morning_text = (
-                    "☀️ <b>Доброго ранку!</b>\n\n"
-                    f"{morning_text}"
+        if not cities:
+            print(
+                "ℹ️ Немає міст для ранкової розсилки"
+            )
+            return
+
+        sent_cities = set()
+
+        for city in cities:
+
+            if city in sent_cities:
+                continue
+
+            sent_cities.add(city)
+
+            try:
+                # =============================================
+                # ПОГОДА
+                # =============================================
+
+                weather = await asyncio.to_thread(
+                    get_weather,
+                    city,
                 )
 
-            await send_to_group(
-                bot,
-                morning_text,
-            )
+                if not weather:
+                    print(
+                        f"⚠️ Немає погоди для {city}"
+                    )
+                    continue
 
-            print(
-                "✅ «Доброго ранку» "
-                "відправлено"
-            )
+                icon = get_weather_icon(
+                    weather.get("condition")
+                )
 
-            await asyncio.sleep(1)
+                weather_text = (
+                    f"{icon} "
+                    f"<b>{weather.get('condition', '')}</b>\n"
+                    f"🌡 Температура: "
+                    f"{weather.get('temp', '—')}°C\n"
+                    f"💨 Вітер: "
+                    f"{weather.get('wind', '—')} м/с\n"
+                    f"💧 Вологість: "
+                    f"{weather.get('humidity', '—')}%"
+                )
+
+                # =============================================
+                # AI: АНЕКДОТ + ПОБАЖАННЯ
+                # =============================================
+
+                ai_content = None
+
+                try:
+                    ai_content = await asyncio.to_thread(
+                        ai_joke.generate_daily_content,
+                        city,
+                        weather,
+                    )
+
+                except Exception as e:
+                    print(
+                        f"⚠️ AI помилка {city}: {e}"
+                    )
+
+                # =============================================
+                # Є ЩО СКАЗАТИ
+                # =============================================
+
+                day_fact = None
+
+                try:
+                    day_fact = await asyncio.to_thread(
+                        get_day_facts,
+                        city,
+                    )
+
+                except Exception as e:
+                    print(
+                        f"⚠️ Помилка «Є що сказати» "
+                        f"{city}: {e}"
+                    )
+
+                # =============================================
+                # ФОРМУЄМО ОДНЕ ПОВІДОМЛЕННЯ
+                # =============================================
+
+                text = (
+                    "☀️ <b>ДОБРОГО РАНКУ!</b>\n\n"
+                    f"📍 <b>{city}</b>\n\n"
+                    f"{weather_text}"
+                )
+
+                # AI побажання
+                if ai_content:
+                    greeting = ai_content.get(
+                        "greeting"
+                    )
+
+                    if greeting:
+                        text += (
+                            "\n\n💡 <b>Побажання дня:</b>\n"
+                            f"{greeting}"
+                        )
+
+                # AI анекдот
+                if ai_content:
+                    joke = ai_content.get(
+                        "joke"
+                    )
+
+                    if joke:
+                        text += (
+                            "\n\n😂 <b>Анекдот дня:</b>\n"
+                            f"{joke}"
+                        )
+
+                # Є що сказати
+                if day_fact:
+                    text += (
+                        "\n\n🧠 <b>Є що сказати:</b>\n"
+                        f"{day_fact}"
+                    )
+
+                await send_to_group(
+                    bot,
+                    text,
+                )
+
+                print(
+                    f"✅ Ранкове повідомлення "
+                    f"відправлено: {city}"
+                )
+
+                await asyncio.sleep(1)
+
+            except Exception as e:
+
+                print(
+                    f"❌ Помилка ранкової розсилки "
+                    f"{city}: {e}"
+                )
 
     except Exception as e:
 
         print(
-            f"❌ Помилка «Доброго ранку»: {e}"
+            f"❌ Помилка ранкової розсилки: {e}"
         )
-
-    # -------------------------------------------------
-    # 2. ПОГОДА
-    # -------------------------------------------------
-
-    await send_morning_weather(
-        bot
-    )
-
-    # -------------------------------------------------
-    # 3. Є ЩО СКАЗАТИ
-    # -------------------------------------------------
-
-    await send_morning_day_facts(
-        bot
-    )
 
     print(
         "✅ Ранкова розсилка завершена"
     )
 
-
-# =====================================================
-# ПЛАНУВАЛЬНИК РАНКОВОЇ РОЗСИЛКИ
-# =====================================================
-
-async def morning_weather_scheduler(
-    bot: Bot,
-):
-    print(
-        "🌅 Планувальник ранкової "
-        "розсилки запущений"
-    )
-
-    scheduler_name = (
-        "morning_content"
-    )
-
-    while True:
-
-        try:
-
-            now = datetime.now(
-                KYIV_TIMEZONE
-            )
-
-            today = now.strftime(
-                "%Y-%m-%d"
-            )
-
-            last_run = (
-                get_scheduler_last_run(
-                    scheduler_name
-                )
-            )
-
-            # =================================================
-            # РАНКОВА РОЗСИЛКА — ТІЛЬКИ О 08:00
-            #
-            # Не запускаємо розсилку просто через те,
-            # що бот був перезапущений після 08:00.
-            # =================================================
-
-            if (
-                now.hour == 8
-                and now.minute <= 1
-                and last_run != today
-            ):
-
-                print(
-                    "🌅 Час ранкової розсилки — 08:00"
-                )
-
-                await send_morning_content(
-                    bot
-                )
-
-                set_scheduler_last_run(
-                    scheduler_name,
-                    today,
-                )
-
-                print(
-                    "💾 Ранкова розсилка "
-                    f"записана: {today}"
-                )
-
-                continue
-
-            # =================================================
-            # НАСТУПНИЙ ЗАПУСК
-            # =================================================
-
-            next_run = now.replace(
-                hour=8,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-
-            if next_run <= now:
-
-                next_run += timedelta(
-                    days=1
-                )
-
-            wait_seconds = (
-                next_run - now
-            ).total_seconds()
-
-            print(
-                "⏰ Наступна ранкова "
-                "розсилка: "
-                f"{next_run.strftime('%d.%m.%Y %H:%M')}"
-            )
-
-            await asyncio.sleep(
-                wait_seconds
-            )
-
-        except asyncio.CancelledError:
-
-            print(
-                "🌅 Планувальник ранкової "
-                "розсилки зупинений"
-            )
-
-            raise
-
-        except Exception as e:
-
-            print(
-                f"❌ Помилка планувальника: {e}"
-            )
-
-            await asyncio.sleep(
-                60
-            )
