@@ -3,9 +3,21 @@ import requests
 from datetime import date
 
 from config import OPENROUTER_API_KEY
+from app.database.db import (
+    get_daily_content,
+    save_daily_content,
+)
 
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+AI_MODELS = [
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "z-ai/glm-5.2:free",
+    "minimax/minimax-m3:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+]
 
 
 def generate_daily_content(city, weather):
@@ -13,7 +25,41 @@ def generate_daily_content(city, weather):
     Генерує один раз на день:
     - анекдот дня
     - живе побажання дня
+
+    Якщо контент на сьогодні вже є в БД —
+    повторно AI не викликаємо.
     """
+
+    today = date.today().isoformat()
+
+    # =================================================
+    # ПЕРЕВІРКА ГОТОВОГО КОНТЕНТУ
+    # =================================================
+
+    try:
+        cached = get_daily_content(city)
+
+        if (
+            cached
+            and cached.get("date") == today
+            and cached.get("joke")
+            and cached.get("greeting")
+        ):
+            print(
+                f"💾 DAILY CONTENT | "
+                f"{city} | взято з БД"
+            )
+
+            return {
+                "joke": cached["joke"],
+                "greeting": cached["greeting"],
+            }
+
+    except Exception as e:
+        print(
+            f"⚠️ Помилка читання контенту "
+            f"{city}: {e}"
+        )
 
     if not OPENROUTER_API_KEY:
         print("❌ OPENROUTER_API_KEY не заданий")
@@ -132,37 +178,82 @@ def generate_daily_content(city, weather):
 """
 
     try:
-        response = requests.post(
-            OPENROUTER_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "openrouter/free",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 1.1,
-                "max_tokens": 350,
-            },
-            timeout=30,
-        )
+        data = None
 
-        if response.status_code != 200:
+        for model in AI_MODELS:
+
             print(
-                f"❌ OpenRouter помилка: "
-                f"{response.status_code} "
-                f"{response.text}"
+                f"🤖 AI MODEL | {model}"
+            )
+
+            try:
+                response = requests.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        "temperature": 1.0,
+                        "max_tokens": 500,
+                        "response_format": {
+                            "type": "json_object"
+                        },
+                    },
+                    timeout=30,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    break
+
+                print(
+                    f"⚠️ {model} | "
+                    f"HTTP {response.status_code}"
+                )
+
+                if response.status_code == 429:
+                    continue
+
+                print(response.text)
+
+            except Exception as e:
+                print(
+                    f"⚠️ Помилка моделі "
+                    f"{model}: {e}"
+                )
+                continue
+
+        if data is None:
+            print(
+                "❌ Усі AI-моделі недоступні"
             )
             return None
 
-        data = response.json()
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
 
-        content = data["choices"][0]["message"]["content"].strip()
+        print("🤖 OPENROUTER RESPONSE:")
+        print("finish_reason:", choice.get("finish_reason"))
+        print("message keys:", list(message.keys()))
+        print("message:", repr(message))
+
+        content = message.get("content")
+
+        if not isinstance(content, str) or not content.strip():
+            print("❌ AI не повернув текстовий content")
+            return None
+
+        content = content.strip()
+
+        content = content.strip()
 
         # Прибираємо markdown ```json, якщо модель його додасть
         if content.startswith("```"):
@@ -192,9 +283,35 @@ def generate_daily_content(city, weather):
             )
             return None
 
+        joke = joke.strip()
+        greeting = greeting.strip()
+
+        # =================================================
+        # ЗБЕРІГАЄМО КОНТЕНТ НА СЬОГОДНІ
+        # =================================================
+
+        try:
+            save_daily_content(
+                city,
+                today,
+                joke,
+                greeting,
+            )
+
+            print(
+                f"💾 DAILY CONTENT | "
+                f"{city} | збережено в БД"
+            )
+
+        except Exception as e:
+            print(
+                f"⚠️ Не вдалося зберегти "
+                f"контент {city}: {e}"
+            )
+
         return {
-            "joke": joke.strip(),
-            "greeting": greeting.strip(),
+            "joke": joke,
+            "greeting": greeting,
         }
 
     except Exception as e:
