@@ -1,5 +1,6 @@
 import json
 import requests
+from datetime import date
 
 from config import OPENROUTER_API_KEY
 
@@ -24,8 +25,18 @@ def generate_daily_content(city, weather):
     wind = weather.get("wind")
     humidity = weather.get("humidity")
 
+    today = date.today().isoformat()
+
     prompt = f"""
 Ти — Погодун, веселий український погодний помічник.
+
+Сьогодні: {today}
+
+ВАЖЛИВО:
+Це новий випуск контенту дня.
+Не використовуй шаблон із попередніх відповідей.
+Щоразу вигадуй новий сюжет, нову подачу та нову фразу.
+Не повторюй однакові жарти, побажання або конструкції речень.
 
 Створи КОНТЕНТ ДНЯ для користувачів.
 
