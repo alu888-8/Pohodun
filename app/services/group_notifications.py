@@ -1430,47 +1430,75 @@ async def group_alert_monitor(
                     alert_active
                     and not previous_state
                 ):
-                    # =================================================
-                    # ОТРИМУЄМО АКТУАЛЬНІ ЗАГРОЗИ
+                    # Alerts API може спрацювати раніше,
+                    # ніж Threats API встигне оновитися.
                     #
-                    # Alerts API може оновитися раніше за
-                    # Threats API, тому робимо до 3 спроб.
-                    # =================================================
+                    # Тому перевіряємо Threats API до 10 разів
+                    # з інтервалом 3 секунди.
+                    #
+                    # Максимальне очікування: ~27 секунд.
+                    # Кілометри НЕ використовуються.
 
                     location_threats = []
 
-                    for attempt in range(3):
+                    for attempt in range(10):
 
-                        threats_data = (
-                            await asyncio.to_thread(
-                                get_threats
-                            )
-                        )
+                        try:
 
-                        location_threats = (
-                            get_location_threats(
-                                location,
-                                threats_data,
+                            threats_data = (
+                                await asyncio.to_thread(
+                                    get_threats
+                                )
                             )
-                            if threats_data
-                            else []
-                        )
+
+                            location_threats = (
+                                get_location_threats(
+                                    location,
+                                    threats_data,
+                                )
+                                if threats_data
+                                else []
+                            )
+
+                        except Exception as e:
+
+                            print(
+                                f"⚠️ Помилка Threats API "
+                                f"{location.get('name')}: {e}"
+                            )
+
+                            location_threats = []
 
                         if location_threats:
+
                             print(
-                                f"🎯 Загрози знайдені "
-                                f"з {attempt + 1}-ї спроби"
+                                f"🎯 Загрози знайдені для "
+                                f"{location.get('name')} "
+                                f"з {attempt + 1}-ї перевірки"
                             )
+
+                            for threat in location_threats:
+
+                                print(
+                                    f"   🚨 "
+                                    f"{threat.get('type')} | "
+                                    f"{threat.get('title')} | "
+                                    f"{threat.get('locality')}"
+                                )
+
                             break
 
-                        if attempt < 2:
+                        if attempt < 9:
+
                             print(
-                                "⏳ Загроз поблизу поки "
-                                "не знайдено — повторна "
-                                "перевірка через 2 секунди"
+                                f"⏳ Threats API: "
+                                f"загроз для "
+                                f"{location.get('name')} "
+                                f"ще немає "
+                                f"({attempt + 1}/10)"
                             )
 
-                            await asyncio.sleep(2)
+                            await asyncio.sleep(3)
 
                     await send_to_group(
                         bot,
