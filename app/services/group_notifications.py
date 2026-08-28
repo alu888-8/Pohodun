@@ -1918,24 +1918,6 @@ async def send_morning_content(
                     )
 
                 # =============================================
-                # Є ЩО СКАЗАТИ
-                # =============================================
-
-                day_fact = None
-
-                try:
-                    day_fact = await asyncio.to_thread(
-                        get_day_facts,
-                        city,
-                    )
-
-                except Exception as e:
-                    print(
-                        f"⚠️ Помилка «Є що сказати» "
-                        f"{city}: {e}"
-                    )
-
-                # =============================================
                 # ФОРМУЄМО ОДНЕ ПОВІДОМЛЕННЯ
                 # =============================================
 
@@ -1969,12 +1951,17 @@ async def send_morning_content(
                             f"{joke}"
                         )
 
-                # Є що сказати
-                if day_fact:
-                    text += (
-                        "\n\n🧠 <b>Є що сказати:</b>\n"
-                        f"{day_fact}"
+                # AI порада дня
+                if ai_content:
+                    advice = ai_content.get(
+                        "advice"
                     )
+
+                    if advice:
+                        text += (
+                            "\n\n💡 <b>Порада дня:</b>\n"
+                            f"{advice}"
+                        )
 
                 await send_to_group(
                     bot,

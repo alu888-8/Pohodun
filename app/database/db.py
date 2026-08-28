@@ -74,7 +74,8 @@ def init_db():
             city TEXT PRIMARY KEY,
             content_date TEXT NOT NULL,
             joke TEXT NOT NULL,
-            greeting TEXT NOT NULL
+            greeting TEXT NOT NULL,
+            advice TEXT NOT NULL DEFAULT ''
         )
     """)
 
@@ -337,7 +338,8 @@ def get_daily_content(city):
         SELECT
             content_date,
             joke,
-            greeting
+            greeting,
+            advice
         FROM daily_content_city
         WHERE city=?
     """, (
@@ -353,7 +355,8 @@ def get_daily_content(city):
         return {
             "date": row[0],
             "joke": row[1],
-            "greeting": row[2]
+            "greeting": row[2],
+            "advice": row[3],
         }
 
     return None
@@ -363,7 +366,8 @@ def save_daily_content(
     city,
     content_date,
     joke,
-    greeting
+    greeting,
+    advice=""
 ):
 
     conn = get_connection()
@@ -374,20 +378,23 @@ def save_daily_content(
             city,
             content_date,
             joke,
-            greeting
+            greeting,
+            advice
         )
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
 
         ON CONFLICT(city)
         DO UPDATE SET
             content_date=excluded.content_date,
             joke=excluded.joke,
-            greeting=excluded.greeting
+            greeting=excluded.greeting,
+            advice=excluded.advice
     """, (
         city,
         content_date,
         joke,
-        greeting
+        greeting,
+        advice,
     ))
 
     conn.commit()

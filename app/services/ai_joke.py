@@ -44,6 +44,7 @@ def generate_daily_content(city, weather):
             and cached.get("date") == today
             and cached.get("joke")
             and cached.get("greeting")
+            and cached.get("advice")
         ):
             print(
                 f"💾 DAILY CONTENT | "
@@ -53,6 +54,7 @@ def generate_daily_content(city, weather):
             return {
                 "joke": cached["joke"],
                 "greeting": cached["greeting"],
+                "advice": cached["advice"],
             }
 
     except Exception as e:
@@ -265,6 +267,7 @@ def generate_daily_content(city, weather):
 
         joke = result.get("joke")
         greeting = result.get("greeting")
+        advice = result.get("advice")
 
         print("🤖 AI JSON:")
         print(result)
@@ -283,8 +286,99 @@ def generate_daily_content(city, weather):
             )
             return None
 
+        # =================================================
+        # ЯКЩО AI НЕ ПОВЕРНУВ ADVICE —
+        # ОКРЕМИЙ ЗАПИТ ТІЛЬКИ ДЛЯ ПОРАДИ
+        # =================================================
+
+        if not isinstance(advice, str) or not advice.strip():
+
+            print("⚠️ AI не повернув advice — генеруємо окремо")
+
+            advice_prompt = f"""
+Ти — Погодун, український погодний помічник.
+
+Місто: {city}
+Температура: {temp}°C
+Відчувається: {feels}°C
+Погода: {condition}
+Вітер: {wind} м/с
+Вологість: {humidity}%
+
+Напиши ОДНУ коротку практичну пораду на сьогодні.
+
+Правила:
+- тільки природна сучасна українська мова;
+- одне речення;
+- конкретна і корисна порада;
+- врахуй сьогоднішню погоду;
+- кожного разу обирай іншу тему;
+- можна радити щодо одягу, прогулянки, води,
+  сонця, активності, відпочинку, роботи або побуту;
+- іноді додай легкий гумор;
+- без пафосу;
+- без медичних рекомендацій;
+- не починай зі слів "Гарного дня", "Бажаю" або "Нехай".
+
+Поверни ТІЛЬКИ текст поради.
+"""
+
+            try:
+                advice_response = requests.post(
+                    OPENROUTER_URL,
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "minimax/minimax-m3:free",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": advice_prompt,
+                            }
+                        ],
+                        "temperature": 1.0,
+                        "max_tokens": 100,
+                    },
+                    timeout=30,
+                )
+
+                if advice_response.status_code == 200:
+
+                    advice_data = advice_response.json()
+
+                    advice_content = (
+                        advice_data
+                        .get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content")
+                    )
+
+                    if (
+                        isinstance(advice_content, str)
+                        and advice_content.strip()
+                    ):
+                        advice = advice_content.strip()
+
+                        print(
+                            f"💡 AI ADVICE: {advice}"
+                        )
+
+            except Exception as e:
+                print(
+                    f"⚠️ Помилка генерації advice: {e}"
+                )
+
+        if not isinstance(advice, str) or not advice.strip():
+            print(
+                f"❌ AI не зміг згенерувати advice"
+            )
+            return None
+
         joke = joke.strip()
         greeting = greeting.strip()
+        advice = advice.strip()
 
         # =================================================
         # ЗБЕРІГАЄМО КОНТЕНТ НА СЬОГОДНІ
@@ -296,6 +390,7 @@ def generate_daily_content(city, weather):
                 today,
                 joke,
                 greeting,
+                advice,
             )
 
             print(
@@ -312,6 +407,7 @@ def generate_daily_content(city, weather):
         return {
             "joke": joke,
             "greeting": greeting,
+            "advice": advice,
         }
 
     except Exception as e:
