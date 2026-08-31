@@ -1992,3 +1992,50 @@ async def send_morning_content(
         "✅ Ранкова розсилка завершена"
     )
 
+
+
+# =====================================================
+# ПЛАНУВАЛЬНИК РАНКОВОЇ РОЗСИЛКИ
+# =====================================================
+
+async def morning_weather_scheduler(
+    bot: Bot,
+):
+    """
+    Щодня запускає ранкову розсилку один раз.
+    """
+
+    print("🌅 Morning weather scheduler запущений")
+
+    while True:
+
+        try:
+            now = datetime.now()
+            today = now.date().isoformat()
+
+            # Час ранкової розсилки
+            if (
+                now.hour == 8
+                and now.minute == 0
+                and get_scheduler_last_run(
+                    "morning_weather"
+                ) != today
+            ):
+
+                print(
+                    "🌅 Час ранкової розсилки — запускаємо"
+                )
+
+                await send_morning_content(bot)
+
+                set_scheduler_last_run(
+                    "morning_weather",
+                    today,
+                )
+
+        except Exception as e:
+            print(
+                f"❌ Помилка morning scheduler: {e}"
+            )
+
+        await asyncio.sleep(30)
