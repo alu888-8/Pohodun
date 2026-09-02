@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
+from app.handlers.threats import format_threat
 from app.services.alerts import get_alerts
 from app.services.threats import get_threats
 from app.services.weather import get_weather
@@ -1332,12 +1333,48 @@ def format_alert_end(
 #   не надсилаємо окремого повідомлення.
 # =====================================================
 
+def threat_signature(threat):
+    """
+    Стабільний підпис загрози для визначення
+    суттєвих змін у даних NEPTUN.
+
+    updatedAt навмисно НЕ враховується,
+    щоб бот не спамив при кожному оновленні API.
+    """
+    if not isinstance(threat, dict):
+        return ()
+
+    return (
+        threat.get("type"),
+        threat.get("title"),
+        threat.get("region"),
+        threat.get("district"),
+        threat.get("locality"),
+        threat.get("heading"),
+        threat.get("status"),
+        threat.get("destination"),
+        threat.get("presumptiveCourse"),
+        threat.get("areaOnly"),
+        threat.get("confidenceLevel"),
+        threat.get("sourceCount"),
+        threat.get("positionQuality"),
+        threat.get("uncertaintyKm"),
+    )
+
+
 async def group_alert_monitor(
     bot: Bot,
 ):
     print(
         "🚨 Моніторинг тривог запущений"
     )
+
+    # Стан тривог по локаціях
+    _last_alert_states = {}
+
+    # Стан загроз по локаціях.
+    # updatedAt НЕ враховується, щоб не було спаму.
+    _last_threat_states = {}
 
     while True:
         try:
@@ -1374,84 +1411,55 @@ async def group_alert_monitor(
             current_keys = set()
 
             for location in locations:
-                location_key = normalize(
-                    location.get("key")
-                )
-
-                if not location_key:
-                    continue
-
-                current_keys.add(
-                    location_key
-                )
-
-                alert_active = (
-                    is_location_alert_active(
-                        location,
-                        alerts_data,
+                try:
+                    location_key = normalize(
+                        location.get("key")
                     )
-                )
 
-                previous_state = (
-                    _last_alert_states.get(
+                    if not location_key:
+                        continue
+
+                    current_keys.add(
                         location_key
                     )
-                )
 
-                print(
-                    f"📡 ALERT CHECK | "
-                    f"{location.get('name')} | "
-                    f"active={alert_active} | "
-                    f"previous={previous_state}"
-                )
+                    alert_active = (
+                        is_location_alert_active(
+                            location,
+                            alerts_data,
+                        )
+                    )
 
-                # =================================================
-                # ПЕРШИЙ ЗАПУСК
-                # =================================================
-
-                if previous_state is None:
-                    _last_alert_states[
-                        location_key
-                    ] = alert_active
+                    previous_state = (
+                        _last_alert_states.get(
+                            location_key
+                        )
+                    )
 
                     print(
-                        f"📡 Початковий стан "
-                        f"{location.get('name')}: "
-                        f"тривога={alert_active}"
+                        f"📡 ALERT CHECK | "
+                        f"{location.get('name')} | "
+                        f"active={alert_active} | "
+                        f"previous={previous_state}"
                     )
 
-                    continue
+                    # =================================================
+                    # ПЕРШИЙ ЗАПУСК
+                    # =================================================
 
-                # =================================================
-                # ПОЧАТОК ТРИВОГИ
-                # =================================================
-
-                if (
-                    alert_active
-                    and not previous_state
-                ):
-                    # Alerts API може спрацювати раніше,
-                    # ніж Threats API встигне оновитися.
-                    #
-                    # Тому перевіряємо Threats API до 10 разів
-                    # з інтервалом 3 секунди.
-                    #
-                    # Максимальне очікування: ~27 секунд.
-                    # Кілометри НЕ використовуються.
-
-                    location_threats = []
-
-                    for attempt in range(10):
+                    if previous_state is None:
+                        _last_alert_states[
+                            location_key
+                        ] = alert_active
 
                         try:
-
                             threats_data = (
                                 await asyncio.to_thread(
                                     get_threats
                                 )
                             )
 
-                            location_threats = (
+                            initial_threats = (
                                 get_location_threats(
                                     location,
                                     threats_data,
@@ -1460,111 +1468,331 @@ async def group_alert_monitor(
                                 else []
                             )
 
-                        except Exception as e:
+                            _last_threat_states[
+                                location_key
+                            ] = {
+                                threat.get("id"):
+                                threat_signature(threat)
+                                for threat in initial_threats
+                                if threat.get("id")
+                            }
 
+                        except Exception as e:
                             print(
-                                f"⚠️ Помилка Threats API "
+                                f"⚠️ Не вдалося отримати "
+                                f"початкові загрози "
                                 f"{location.get('name')}: {e}"
                             )
 
-                            location_threats = []
+                        print(
+                            f"📡 Початковий стан "
+                            f"{location.get('name')}: "
+                            f"тривога={alert_active}"
+                        )
 
-                        if location_threats:
+                        continue
 
-                            print(
-                                f"🎯 Загрози знайдені для "
-                                f"{location.get('name')} "
-                                f"з {attempt + 1}-ї перевірки"
-                            )
+                    # =================================================
+                    # ПОЧАТОК ТРИВОГИ
+                    # =================================================
 
-                            for threat in location_threats:
+                    if (
+                        alert_active
+                        and not previous_state
+                    ):
+                        location_threats = []
 
-                                print(
-                                    f"   🚨 "
-                                    f"{threat.get('type')} | "
-                                    f"{threat.get('title')} | "
-                                    f"{threat.get('locality')}"
+                        # Чекаємо появу реальних threat-даних.
+                        for attempt in range(10):
+                            try:
+                                threats_data = (
+                                    await asyncio.to_thread(
+                                        get_threats
+                                    )
                                 )
 
-                            break
+                                location_threats = (
+                                    get_location_threats(
+                                        location,
+                                        threats_data,
+                                    )
+                                    if threats_data
+                                    else []
+                                )
 
-                        if attempt < 9:
+                            except Exception as e:
+                                print(
+                                    f"⚠️ Помилка Threats API "
+                                    f"{location.get('name')}: {e}"
+                                )
 
-                            print(
-                                f"⏳ Threats API: "
-                                f"загроз для "
-                                f"{location.get('name')} "
-                                f"ще немає "
-                                f"({attempt + 1}/10)"
-                            )
+                                location_threats = []
 
-                            await asyncio.sleep(3)
+                            if location_threats:
+                                print(
+                                    f"🎯 Загрози знайдені для "
+                                    f"{location.get('name')} "
+                                    f"з {attempt + 1}-ї перевірки"
+                                )
+                                break
 
-                    await send_to_group(
-                        bot,
-                        format_alert_start(
-                            location,
-                            location_threats,
-                        ),
-                    )
+                            if attempt < 9:
+                                print(
+                                    f"⏳ Threats API: "
+                                    f"загроз для "
+                                    f"{location.get('name')} "
+                                    f"ще немає "
+                                    f"({attempt + 1}/10)"
+                                )
 
-                    _last_alert_states[
-                        location_key
-                    ] = True
+                                await asyncio.sleep(3)
 
-                    print(
-                        f"🚨 ПОЧАЛАСЯ ТРИВОГА: "
-                        f"{location.get('name')}"
-                    )
+                        await send_to_group(
+                            bot,
+                            format_alert_start(
+                                location,
+                                location_threats,
+                            ),
+                        )
 
-                # =================================================
-                # ВІДБІЙ
-                # =================================================
+                        _last_alert_states[
+                            location_key
+                        ] = True
 
-                elif (
-                    not alert_active
-                    and previous_state
-                ):
-                    await send_to_group(
-                        bot,
-                        format_alert_end(
-                            location
-                        ),
-                    )
+                        _last_threat_states[
+                            location_key
+                        ] = {
+                            threat.get("id"):
+                            threat_signature(threat)
+                            for threat in location_threats
+                            if threat.get("id")
+                        }
 
-                    _last_alert_states[
-                        location_key
-                    ] = False
+                        print(
+                            f"🚨 ПОЧАЛАСЯ ТРИВОГА: "
+                            f"{location.get('name')}"
+                        )
 
-                    print(
-                        f"🟢 ВІДБІЙ: "
-                        f"{location.get('name')}"
-                    )
+                        continue
 
-                # =================================================
-                # СТАН НЕ ЗМІНИВСЯ
-                # =================================================
+                    # =================================================
+                    # ВІДБІЙ
+                    # =================================================
 
-                else:
+                    if (
+                        not alert_active
+                        and previous_state
+                    ):
+                        await send_to_group(
+                            bot,
+                            format_alert_end(
+                                location
+                            ),
+                        )
+
+                        _last_alert_states[
+                            location_key
+                        ] = False
+
+                        _last_threat_states[
+                            location_key
+                        ] = {}
+
+                        print(
+                            f"🟢 ВІДБІЙ: "
+                            f"{location.get('name')}"
+                        )
+
+                        continue
+
+                    # =================================================
+                    # ТРИВОГА ПРОДОВЖУЄТЬСЯ
+                    # =================================================
+
                     _last_alert_states[
                         location_key
                     ] = alert_active
 
-            # =================================================
-            # ВИДАЛЯЄМО СТАРІ ЛОКАЦІЇ
-            # =================================================
+                    if not alert_active:
+                        continue
 
+                    threats_data = await asyncio.to_thread(
+                        get_threats
+                    )
+
+                    location_threats = (
+                        get_location_threats(
+                            location,
+                            threats_data,
+                        )
+                        if threats_data
+                        else []
+                    )
+
+                    current_threats = {
+                        threat.get("id"): threat
+                        for threat in location_threats
+                        if threat.get("id")
+                    }
+
+                    previous_threats = (
+                        _last_threat_states.get(
+                            location_key,
+                            {}
+                        )
+                    )
+
+                    current_signatures = {
+                        threat_id:
+                        threat_signature(threat)
+                        for threat_id, threat
+                        in current_threats.items()
+                    }
+
+                    # =================================================
+                    # НОВА ЗАГРОЗА
+                    # =================================================
+
+                    new_ids = (
+                        set(current_threats)
+                        - set(previous_threats)
+                    )
+
+                    for threat_id in new_ids:
+                        threat = current_threats[
+                            threat_id
+                        ]
+
+                        print(
+                            f"🆕 НОВА ЗАГРОЗА | "
+                            f"{location.get('name')} | "
+                            f"id={threat_id}"
+                        )
+
+                        try:
+                            threat_text = format_threat(
+                                threat
+                            )
+
+                            await send_to_group(
+                                bot,
+                                (
+                                    f"🚨 <b>Нова загроза</b> — "
+                                    f"{location.get('name')}\n\n"
+                                    f"{threat_text}"
+                                ),
+                            )
+
+                        except Exception as e:
+                            print(
+                                f"❌ Помилка повідомлення "
+                                f"про нову загрозу "
+                                f"{threat_id}: {e}"
+                            )
+
+                    # =================================================
+                    # СУТТЄВА ЗМІНА ЗАГРОЗИ
+                    # =================================================
+
+                    for threat_id in (
+                        set(current_threats)
+                        & set(previous_threats)
+                    ):
+                        if (
+                            current_signatures[
+                                threat_id
+                            ]
+                            != previous_threats[
+                                threat_id
+                            ]
+                        ):
+                            threat = current_threats[
+                                threat_id
+                            ]
+
+                            print(
+                                f"🔄 ЗМІНА ЗАГРОЗИ | "
+                                f"{location.get('name')} | "
+                                f"id={threat_id}"
+                            )
+
+                            try:
+                                threat_text = format_threat(
+                                    threat
+                                )
+
+                                await send_to_group(
+                                    bot,
+                                    (
+                                        f"🔄 <b>Зміна загрози</b> — "
+                                        f"{location.get('name')}\n\n"
+                                        f"{threat_text}"
+                                    ),
+                                )
+
+                            except Exception as e:
+                                print(
+                                    f"❌ Помилка повідомлення "
+                                    f"про зміну загрози "
+                                    f"{threat_id}: {e}"
+                                )
+
+                    # =================================================
+                    # ЗАГРОЗА ЗНИКЛА
+                    # =================================================
+
+                    removed_ids = (
+                        set(previous_threats)
+                        - set(current_threats)
+                    )
+
+                    for threat_id in removed_ids:
+                        print(
+                            f"⬜ ЗАГРОЗА ЗНИКЛА | "
+                            f"{location.get('name')} | "
+                            f"id={threat_id}"
+                        )
+
+                        await send_to_group(
+                            bot,
+                            (
+                                f"⬜ <b>Загроза більше "
+                                f"не фіксується</b> — "
+                                f"{location.get('name')}\n"
+                                f"ID: <code>{threat_id}</code>"
+                            ),
+                        )
+
+                    _last_threat_states[
+                        location_key
+                    ] = current_signatures
+
+                except Exception as e:
+                    print(
+                        f"❌ Помилка моніторингу "
+                        f"{location.get('name', 'невідома локація')}: "
+                        f"{e}"
+                    )
+
+            # Видаляємо старі локації.
             for key in list(
                 _last_alert_states.keys()
             ):
                 if key not in current_keys:
-                    del _last_alert_states[
-                        key
-                    ]
+                    _last_alert_states.pop(
+                        key,
+                        None
+                    )
+
+                    _last_threat_states.pop(
+                        key,
+                        None
+                    )
 
         except Exception as e:
             print(
-                f"❌ Помилка моніторингу: {e}"
+                f"❌ Критична помилка "
+                f"моніторингу тривог: {e}"
             )
 
         await asyncio.sleep(
