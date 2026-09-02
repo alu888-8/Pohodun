@@ -25,6 +25,7 @@ from app.services.neptun_locations import (
     find_city_location,
     find_raion,
     find_raion_by_coordinates,
+    _point_in_geometry,
 )
 
 from app.utils.weather_icons import get_weather_icon
@@ -919,28 +920,22 @@ def get_location_threats(
     data,
 ):
     """
-    Визначення загроз без радіуса.
-
-    Джерело загроз:
-        Threats API
-
-    Для звичайних міст:
-        - пряма загроза locality == місто;
-        - або загроза знаходиться в тому самому
-          районі NEPTUN.
+    Визначення загроз для конкретної локації.
 
     Для Києва:
-        - пряма загроза locality == Київ;
-        - kyiv-city не має окремого району NEPTUN.
+        - locality == Київ;
+        - або координати threat знаходяться всередині
+          офіційно визначеної геометрії Києва.
+
+    Для інших міст:
+        - locality == місто;
+        - або threat знаходиться в тому самому районі NEPTUN.
     """
 
     if not data:
         return []
 
-    threats = data.get(
-        "threats",
-        []
-    )
+    threats = data.get("threats", [])
 
     if not threats:
         return []
@@ -969,6 +964,37 @@ def get_location_threats(
     )
 
     result = []
+
+    # =================================================
+    # ГЕОМЕТРІЯ КИЄВА
+    # =================================================
+
+    kyiv_geometry = None
+
+    if city_name in ("київ", "kyiv"):
+        try:
+            import json
+
+            kyiv_path = (
+                __import__("pathlib")
+                .Path(__file__)
+                .resolve()
+                .parents[1]
+                / "data"
+                / "kyiv_boundary.geojson"
+            )
+
+            with open(
+                kyiv_path,
+                encoding="utf-8",
+            ) as f:
+                kyiv_geometry = json.load(f)
+
+        except Exception as e:
+            print(
+                f"⚠️ Не вдалося завантажити "
+                f"геометрію Києва: {e}"
+            )
 
     for threat in threats:
 
@@ -1001,9 +1027,7 @@ def get_location_threats(
 
         if locality == city_name:
 
-            threat_copy = dict(
-                threat
-            )
+            threat_copy = dict(threat)
 
             threat_copy[
                 "_threat_raion"
@@ -1030,16 +1054,12 @@ def get_location_threats(
         # =================================================
         # 2. КИЇВ
         #
-        # У NEPTUN Київ має kyiv-city,
-        # але окремого району немає.
+        # Якщо locality не Київ, перевіряємо координати.
         #
-        # Тому для Києва НЕ беремо:
-        # - Київську область;
-        # - Бориспільський район;
-        # - Броварський район;
-        # - будь-який інший район області.
-        #
-        # Тільки locality == Київ.
+        # Важливо:
+        # Київська область ≠ Київ.
+        # Тому Переяслав, Яготин, Бровари тощо
+        # не потрапляють сюди лише через область.
         # =================================================
 
         if city_name in (
@@ -1047,9 +1067,64 @@ def get_location_threats(
             "kyiv",
         ):
 
-            # Київ не має raion_key у NEPTUN.
-            # Якщо locality не Київ — загрозу
-            # для Києва не вважаємо підтвердженою.
+            lat = threat.get("lat")
+            lon = threat.get("lon")
+
+            if lat is None or lon is None:
+                continue
+
+            try:
+                lat = float(lat)
+                lon = float(lon)
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                continue
+
+            if not kyiv_geometry:
+                continue
+
+            try:
+                inside_kyiv = _point_in_geometry(
+                    (lon, lat),
+                    kyiv_geometry,
+                )
+
+            except Exception as e:
+                print(
+                    f"⚠️ Помилка перевірки "
+                    f"геометрії Києва: {e}"
+                )
+                continue
+
+            if not inside_kyiv:
+                continue
+
+            threat_copy = dict(threat)
+
+            threat_copy[
+                "_threat_raion"
+            ] = "kyiv-city"
+
+            threat_copy[
+                "_threat_oblast"
+            ] = "kyiv-city"
+
+            result.append(
+                threat_copy
+            )
+
+            print(
+                f"🎯 THREAT MATCH | "
+                f"КИЇВ ← "
+                f"{threat.get('type')} | "
+                f"{threat.get('title')} | "
+                f"{locality or 'без locality'} | "
+                f"lat={lat} lon={lon}"
+            )
+
             continue
 
         # =================================================
@@ -1108,10 +1183,6 @@ def get_location_threats(
             threat_raion.get("oblast_key")
             or ""
         )
-
-        # =================================================
-        # ЗБЕРІГАЄМО ДАНІ NEPTUN
-        # =================================================
 
         threat_copy = dict(
             threat
@@ -1335,14 +1406,22 @@ def format_alert_end(
 
 def threat_signature(threat):
     """
-    Стабільний підпис загрози для визначення
-    суттєвих змін у даних NEPTUN.
+    Сигнатура реальної зміни загрози.
 
-    updatedAt навмисно НЕ враховується,
-    щоб бот не спамив при кожному оновленні API.
+    НЕ враховуємо динамічні поля NEPTUN:
+        - updatedAt
+        - sourceCount
+        - confidenceLevel
+        - uncertaintyKm
+        - positionQuality
+        - heading
+
+    Вони можуть змінюватися при кожному оновленні API
+    і не повинні створювати Telegram-спам.
     """
+
     if not isinstance(threat, dict):
-        return ()
+        return None
 
     return (
         threat.get("type"),
@@ -1350,15 +1429,10 @@ def threat_signature(threat):
         threat.get("region"),
         threat.get("district"),
         threat.get("locality"),
-        threat.get("heading"),
         threat.get("status"),
         threat.get("destination"),
         threat.get("presumptiveCourse"),
         threat.get("areaOnly"),
-        threat.get("confidenceLevel"),
-        threat.get("sourceCount"),
-        threat.get("positionQuality"),
-        threat.get("uncertaintyKm"),
     )
 
 
@@ -1689,53 +1763,6 @@ async def group_alert_monitor(
                                 f"про нову загрозу "
                                 f"{threat_id}: {e}"
                             )
-
-                    # =================================================
-                    # СУТТЄВА ЗМІНА ЗАГРОЗИ
-                    # =================================================
-
-                    for threat_id in (
-                        set(current_threats)
-                        & set(previous_threats)
-                    ):
-                        if (
-                            current_signatures[
-                                threat_id
-                            ]
-                            != previous_threats[
-                                threat_id
-                            ]
-                        ):
-                            threat = current_threats[
-                                threat_id
-                            ]
-
-                            print(
-                                f"🔄 ЗМІНА ЗАГРОЗИ | "
-                                f"{location.get('name')} | "
-                                f"id={threat_id}"
-                            )
-
-                            try:
-                                threat_text = format_threat(
-                                    threat
-                                )
-
-                                await send_to_group(
-                                    bot,
-                                    (
-                                        f"🔄 <b>Зміна загрози</b> — "
-                                        f"{location.get('name')}\n\n"
-                                        f"{threat_text}"
-                                    ),
-                                )
-
-                            except Exception as e:
-                                print(
-                                    f"❌ Помилка повідомлення "
-                                    f"про зміну загрози "
-                                    f"{threat_id}: {e}"
-                                )
 
                     # =================================================
                     # ЗАГРОЗА ЗНИКЛА
