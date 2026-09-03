@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
-from app.handlers.threats import format_threat
 from app.services.alerts import get_alerts
 from app.services.threats import get_threats
 from app.services.weather import get_weather
@@ -1703,71 +1702,9 @@ async def group_alert_monitor(
                         else []
                     )
 
-                    current_threats = {
-                        threat.get("id"): threat
-                        for threat in location_threats
-                        if threat.get("id")
-                    }
-
-                    previous_threats = (
-                        _last_threat_states.get(
-                            location_key,
-                            {}
-                        )
-                    )
-
-                    current_signatures = {
-                        threat_id:
-                        threat_signature(threat)
-                        for threat_id, threat
-                        in current_threats.items()
-                    }
-
-                    # =================================================
-                    # НОВА ЗАГРОЗА
-                    # =================================================
-
-                    new_ids = (
-                        set(current_threats)
-                        - set(previous_threats)
-                    )
-
-                    for threat_id in new_ids:
-                        threat = current_threats[
-                            threat_id
-                        ]
-
-                        print(
-                            f"🆕 НОВА ЗАГРОЗА | "
-                            f"{location.get('name')} | "
-                            f"id={threat_id}"
-                        )
-
-                        try:
-                            threat_text = format_threat(
-                                threat
-                            )
-
-                            await send_to_group(
-                                bot,
-                                (
-                                    f"🚨 <b>Нова загроза</b> — "
-                                    f"{location.get('name')}\n\n"
-                                    f"{threat_text}"
-                                ),
-                            )
-
-                        except Exception as e:
-                            print(
-                                f"❌ Помилка повідомлення "
-                                f"про нову загрозу "
-                                f"{threat_id}: {e}"
-                            )
-
-
-                    _last_threat_states[
-                        location_key
-                    ] = current_signatures
+                    # Під час активної тривоги окремі загрози
+                    # не надсилаються в Telegram.
+                    # Моніторимо тільки стан самої тривоги.
 
                 except Exception as e:
                     print(

@@ -1234,21 +1234,19 @@ def format_threat(
     item,
 ):
     """
-    Формує загрозу без штучного визначення відстані або цілі.
+    Короткий формат загрози для Telegram.
 
-    locality/district/region — це адміністративні дані NEPTUN.
-    destination та presumptiveCourse не використовуємо,
-    бо вони не є базовими полями актуальної схеми Threats API.
+    Показує тільки інформацію, корисну для радарного
+    моніторингу:
+        - тип загрози;
+        - поточну локацію;
+        - напрямок / пункт призначення;
+        - курс.
     """
 
     threat = item.get(
         "threat",
         item,
-    )
-
-    area_only = bool(
-        item.get("area_only", False)
-        or threat.get("areaOnly", False)
     )
 
     threat_type = normalize(
@@ -1268,141 +1266,58 @@ def format_threat(
         or ""
     )
 
-    region = (
-        threat.get("region")
+    destination = (
+        threat.get("destination")
         or ""
     )
 
-    district = (
-        threat.get("district")
+    presumptive_course = (
+        threat.get("presumptiveCourse")
         or ""
-    )
-
-    source_count = (
-        threat.get("sourceCount")
-        or 0
-    )
-
-    confidence = (
-        threat.get("confidenceLevel")
-        or threat.get("displayConfidence")
-        or ""
-    )
-
-    updated_at = (
-        threat.get("updatedAt")
-        or ""
-    )
-
-    uncertainty = (
-        threat.get("uncertaintyKm")
-    )
-
-    position_quality = (
-        threat.get("positionQuality")
-        or ""
-    )
-
-    advisory = bool(
-        threat.get("advisory", False)
     )
 
     heading = ""
-    if not area_only and not advisory:
+    if not threat.get("areaOnly") and not threat.get("advisory"):
         heading = get_heading_text(
             threat.get("heading")
         )
 
     text = (
-        f"{icon} <b>Загроза: "
-        f"{type_name}</b>\n"
+        f"{icon} <b>{type_name}</b>\n"
     )
 
-    if area_only:
-        text += (
-            "⚠️ <b>Точне місце загрози "
-            "не визначене.</b>\n"
-        )
-
-    if advisory:
-        text += (
-            "ℹ️ Інформаційне спостереження NEPTUN.\n"
-        )
-
-    if locality:
-        text += (
-            f"📍 Локація: <b>{locality}</b>\n"
-        )
-
-    if district:
-        text += (
-            f"🏙 Район: {district}\n"
-        )
-
-    if region:
-        text += (
-            f"🗺 Область: {region}\n"
-        )
-
-    if heading:
-        text += (
-            f"🧭 Курс: <b>{heading}</b>\n"
-        )
-
-    if source_count:
-        text += (
-            f"🔎 Підтверджень: "
-            f"<b>{source_count}</b>\n"
-        )
-
-    if confidence:
-        confidence_names = {
-            "high": "висока",
-            "medium": "середня",
-            "low": "низька",
-        }
-
-        confidence_text = confidence_names.get(
-            normalize(confidence),
-            str(confidence),
-        )
-
-        text += (
-            f"📊 Достовірність: "
-            f"<b>{confidence_text}</b>\n"
-        )
-
-    # Похибку можна показувати як якість координат,
-    # але НЕ перетворюємо її на відстань до користувача.
-    if (
-        uncertainty is not None
-        and not area_only
-    ):
-        try:
-            uncertainty_value = float(
-                uncertainty
-            )
-
+    if locality and destination:
+        if normalize(locality) != normalize(destination):
             text += (
-                f"🎯 Похибка позиції: "
-                f"≈ {uncertainty_value:.1f} км\n"
+                f"📍 <b>{locality}</b> → "
+                f"<b>{destination}</b>\n"
             )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            pass
-
-    if position_quality:
+        else:
+            text += (
+                f"📍 <b>{locality}</b>\n"
+            )
+    elif locality:
         text += (
-            f"📍 Якість позиції: "
-            f"<b>{position_quality}</b>\n"
+            f"📍 <b>{locality}</b>\n"
+        )
+    elif destination:
+        text += (
+            f"📍 → <b>{destination}</b>\n"
         )
 
-    if updated_at:
+    course = (
+        presumptive_course
+        or heading
+    )
+
+    if course:
         text += (
-            f"🕒 Оновлено: "
-            f"<code>{updated_at}</code>"
+            f"🧭 Курс: <b>{course}</b>"
+        )
+
+    if threat.get("advisory"):
+        text += (
+            "\nℹ️ Інформаційне спостереження NEPTUN."
         )
 
     return text.rstrip()
