@@ -19,6 +19,8 @@ from app.handlers.settings import router as settings_router
 from app.handlers.admin import router as admin_router
 from app.handlers.ai_chat import router as ai_chat_router
 
+from app.services.threats import start_threats_websocket
+
 from app.services.group_notifications import (
     group_alert_monitor,
     morning_weather_scheduler,
@@ -115,6 +117,17 @@ async def main():
 
     print(
         "✅ Pohodun запущений"
+    )
+
+
+    # =================================================
+    # NEPTUN WEBSOCKET
+    # =================================================
+
+    start_threats_websocket()
+
+    print(
+        "🛰 NEPTUN WebSocket моніторинг запущений"
     )
 
 
