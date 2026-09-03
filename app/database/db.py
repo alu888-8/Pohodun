@@ -1,7 +1,12 @@
+import os
 import sqlite3
 
 
-DB_NAME = "app/database/users.db"
+DB_NAME = (
+    "/app/database/users.db"
+    if os.path.isdir("/app/database")
+    else "app/database/users.db"
+)
 
 
 def get_connection():
