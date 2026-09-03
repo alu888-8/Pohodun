@@ -71,6 +71,19 @@ def init_db():
         """)
 
     # =====================================================
+    # НАЛАШТУВАННЯ ГРУПОВИХ ЧАТІВ
+    # =====================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS group_settings (
+            chat_id INTEGER PRIMARY KEY,
+            location_key TEXT,
+            location_name TEXT,
+            location_oblast TEXT
+        )
+    """)
+
+    # =====================================================
     # КОНТЕНТ ДНЯ
     # =====================================================
 
@@ -97,6 +110,112 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+# =====================================================
+# ГРУПОВІ НАЛАШТУВАННЯ
+# =====================================================
+
+def get_group_location(chat_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            location_key,
+            location_name,
+            location_oblast
+        FROM group_settings
+        WHERE chat_id=?
+    """, (chat_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row or not row[0]:
+        return None
+
+    return {
+        "key": row[0],
+        "name": row[1] or row[0],
+        "oblast": row[2] or "",
+    }
+
+
+def save_group_location(
+    chat_id,
+    location_key,
+    location_name,
+    location_oblast,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO group_settings (
+            chat_id,
+            location_key,
+            location_name,
+            location_oblast
+        )
+        VALUES (?, ?, ?, ?)
+
+        ON CONFLICT(chat_id)
+        DO UPDATE SET
+            location_key=excluded.location_key,
+            location_name=excluded.location_name,
+            location_oblast=excluded.location_oblast
+    """, (
+        chat_id,
+        location_key,
+        location_name,
+        location_oblast,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def clear_group_location(chat_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM group_settings
+        WHERE chat_id=?
+    """, (chat_id,))
+
+    conn.commit()
+    conn.close()
+
+
+def get_group_locations():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            chat_id,
+            location_key,
+            location_name,
+            location_oblast
+        FROM group_settings
+        WHERE location_key IS NOT NULL
+          AND location_key != ''
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "chat_id": row[0],
+            "key": row[1],
+            "name": row[2] or row[1],
+            "oblast": row[3] or "",
+        }
+        for row in rows
+    ]
 
 
 # =====================================================

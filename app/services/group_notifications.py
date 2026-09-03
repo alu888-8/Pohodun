@@ -57,6 +57,7 @@ _last_alert_states = {}
 async def send_to_group(
     bot: Bot,
     text: str,
+    chat_id=None,
 ):
     # =================================================
     # ГРУПА НЕ ПІДКЛЮЧЕНА
@@ -66,7 +67,13 @@ async def send_to_group(
     # вказати її chat_id у GROUP_CHAT_ID.
     # =================================================
 
-    if not GROUP_CHAT_ID:
+    target_chat_id = (
+        chat_id
+        if chat_id is not None
+        else GROUP_CHAT_ID
+    )
+
+    if not target_chat_id:
         print(
             "ℹ️ GROUP NOTIFICATIONS | "
             "група не підключена"
@@ -75,7 +82,7 @@ async def send_to_group(
 
     try:
         await bot.send_message(
-            chat_id=GROUP_CHAT_ID,
+            chat_id=target_chat_id,
             text=text,
             parse_mode="HTML",
         )
@@ -314,6 +321,162 @@ def get_users_locations():
     except Exception as e:
         print(
             f"❌ Помилка отримання локацій: {e}"
+        )
+
+        return []
+
+
+# =====================================================
+# ЛОКАЦІЇ ГРУПОВИХ ЧАТІВ
+#
+# Беруться тільки з таблиці group_settings.
+# Особисті локації з users сюди не потрапляють.
+# =====================================================
+
+def get_group_locations():
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                chat_id,
+                location_key,
+                location_name,
+                location_oblast
+            FROM group_settings
+            WHERE location_key IS NOT NULL
+              AND location_key != ''
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        locations = []
+
+        for row in rows:
+            chat_id = row[0]
+            location_key = row[1]
+            location_name = row[2]
+            location_oblast = row[3]
+
+            if not location_key:
+                continue
+
+            location = {
+                "chat_id": chat_id,
+                "key": location_key,
+                "name": (
+                    location_name
+                    or location_key
+                ),
+                "oblast": (
+                    location_oblast
+                    or ""
+                ),
+            }
+
+            try:
+                raion = find_raion(
+                    location_key
+                )
+
+                if raion:
+                    location["raion_key"] = (
+                        raion.get("key")
+                    )
+
+                    location["raion_name"] = (
+                        raion.get("name")
+                    )
+
+                    location["oblast_key"] = (
+                        raion.get("oblast_key")
+                    )
+
+                    location["oblast_name"] = (
+                        raion.get("oblast_name")
+                        or raion.get("oblast")
+                        or location_oblast
+                        or ""
+                    )
+
+                    location["latitude"] = (
+                        raion.get("latitude")
+                        or raion.get("lat")
+                        or raion.get("center_latitude")
+                        or raion.get("center_lat")
+                    )
+
+                    location["longitude"] = (
+                        raion.get("longitude")
+                        or raion.get("lon")
+                        or raion.get("center_longitude")
+                        or raion.get("center_lon")
+                    )
+
+                else:
+                    city_location = find_city_location(
+                        location_name
+                        or location_key
+                    )
+
+                    if city_location:
+                        location.update({
+                            "name": (
+                                city_location.get("name")
+                                or location["name"]
+                            ),
+                            "oblast": (
+                                city_location.get("oblast_name")
+                                or location["oblast"]
+                            ),
+                            "raion_key": city_location.get(
+                                "raion_key"
+                            ),
+                            "raion_name": city_location.get(
+                                "raion_name"
+                            ),
+                            "oblast_key": city_location.get(
+                                "oblast_key"
+                            ),
+                            "oblast_name": city_location.get(
+                                "oblast_name"
+                            ),
+                            "latitude": city_location.get(
+                                "latitude"
+                            ),
+                            "longitude": city_location.get(
+                                "longitude"
+                            ),
+                        })
+
+            except Exception as e:
+                print(
+                    f"⚠️ Neptun group location lookup "
+                    f"{location_key}: {e}"
+                )
+
+            locations.append(location)
+
+            print(
+                f"📍 GROUP LOCATION | "
+                f"chat={chat_id} | "
+                f"{location['name']} → "
+                f"{location['key']}"
+            )
+
+        print(
+            f"📡 Групових локацій для моніторингу: "
+            f"{len(locations)}"
+        )
+
+        return locations
+
+    except Exception as e:
+        print(
+            f"❌ Помилка отримання групових локацій: "
+            f"{e}"
         )
 
         return []
@@ -1452,7 +1615,7 @@ async def group_alert_monitor(
     while True:
         try:
             locations = await asyncio.to_thread(
-                get_users_locations
+                get_group_locations
             )
 
             if not locations:
@@ -1626,6 +1789,7 @@ async def group_alert_monitor(
                                 location,
                                 location_threats,
                             ),
+                            chat_id=location.get("chat_id"),
                         )
 
                         _last_alert_states[
@@ -1661,6 +1825,7 @@ async def group_alert_monitor(
                             format_alert_end(
                                 location
                             ),
+                            chat_id=location.get("chat_id"),
                         )
 
                         _last_alert_states[
