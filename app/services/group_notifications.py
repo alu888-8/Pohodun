@@ -1764,31 +1764,6 @@ async def group_alert_monitor(
                                 f"{threat_id}: {e}"
                             )
 
-                    # =================================================
-                    # ЗАГРОЗА ЗНИКЛА
-                    # =================================================
-
-                    removed_ids = (
-                        set(previous_threats)
-                        - set(current_threats)
-                    )
-
-                    for threat_id in removed_ids:
-                        print(
-                            f"⬜ ЗАГРОЗА ЗНИКЛА | "
-                            f"{location.get('name')} | "
-                            f"id={threat_id}"
-                        )
-
-                        await send_to_group(
-                            bot,
-                            (
-                                f"⬜ <b>Загроза більше "
-                                f"не фіксується</b> — "
-                                f"{location.get('name')}\n"
-                                f"ID: <code>{threat_id}</code>"
-                            ),
-                        )
 
                     _last_threat_states[
                         location_key
