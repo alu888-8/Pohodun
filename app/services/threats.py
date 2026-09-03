@@ -51,6 +51,7 @@ def get_threats():
 
     Дані надходять через WebSocket.
     """
+
     with _lock:
         threats = list(_threats.values())
 
@@ -72,7 +73,9 @@ async def _websocket_loop():
     print("🛰 NEPTUN WebSocket запускається")
 
     while True:
+
         try:
+
             timeout = aiohttp.ClientTimeout(
                 total=None,
                 sock_connect=10,
@@ -89,32 +92,65 @@ async def _websocket_loop():
 
                 async with session.ws_connect(
                     WS_URL,
-                    heartbeat=20,
                     autoping=True,
+                    heartbeat=None,
                 ) as ws:
 
                     print(
                         "✅ NEPTUN WebSocket підключено"
                     )
 
-                    async for msg in ws:
+                    while True:
+
+                        try:
+                            msg = await ws.receive(
+                                timeout=45
+                            )
+
+                        except asyncio.TimeoutError:
+
+                            print(
+                                "⏱️ NEPTUN WS: "
+                                "45 сек без повідомлень — перевіряємо з'єднання"
+                            )
+
+                            try:
+                                await ws.ping()
+                                print(
+                                    "🏓 NEPTUN WS ping відправлено"
+                                )
+                                continue
+
+                            except Exception as e:
+                                print(
+                                    "❌ NEPTUN WS ping error:",
+                                    repr(e),
+                                )
+                                break
+
+                        # =====================================
+                        # TEXT
+                        # =====================================
 
                         if msg.type == aiohttp.WSMsgType.TEXT:
 
                             try:
                                 payload = msg.json()
+
                             except Exception as e:
+
                                 print(
-                                    f"⚠️ NEPTUN WS JSON error: {e}"
+                                    "⚠️ NEPTUN WS JSON error:",
+                                    repr(e),
                                 )
                                 continue
 
                             event_type = payload.get("type")
                             data = payload.get("data")
 
-                            # =====================================
-                            # ПОВНИЙ ЗНІМОК
-                            # =====================================
+                            # =================================
+                            # SNAPSHOT
+                            # =================================
 
                             if event_type == "snapshot":
 
@@ -124,22 +160,25 @@ async def _websocket_loop():
                                     else []
                                 )
 
-                                _set_snapshot(threats)
+                                _set_snapshot(
+                                    threats
+                                )
 
                                 print(
                                     "📦 NEPTUN WS snapshot:",
                                     len(threats),
                                 )
 
-                            # =====================================
-                            # НОВА / ОНОВЛЕНА ЗАГРОЗА
-                            # =====================================
+                            # =================================
+                            # UPSERT
+                            # =================================
 
                             elif event_type == "upsert":
 
                                 _upsert(data)
 
                                 if isinstance(data, dict):
+
                                     print(
                                         "🔄 NEPTUN WS upsert:",
                                         data.get("id"),
@@ -147,9 +186,9 @@ async def _websocket_loop():
                                         data.get("locality"),
                                     )
 
-                            # =====================================
-                            # ЗАГРОЗА ВИДАЛЕНА
-                            # =====================================
+                            # =================================
+                            # REMOVE
+                            # =================================
 
                             elif event_type == "remove":
 
@@ -159,50 +198,104 @@ async def _websocket_loop():
                                     else None
                                 )
 
-                                _remove(threat_id)
+                                _remove(
+                                    threat_id
+                                )
 
                                 print(
                                     "⬜ NEPTUN WS remove:",
                                     threat_id,
                                 )
 
-                            # =====================================
+                            # =================================
                             # HEARTBEAT
-                            # =====================================
+                            # =================================
 
                             elif event_type == "heartbeat":
+
                                 pass
 
-                            # =====================================
-                            # ІНШІ ПОДІЇ
-                            # =====================================
+                            # =================================
+                            # ALERTS
+                            # =================================
+
+                            elif event_type == "alerts":
+
+                                print(
+                                    "ℹ️ NEPTUN WS alerts update"
+                                )
+
+                            # =================================
+                            # UNKNOWN
+                            # =================================
 
                             else:
+
                                 print(
                                     "ℹ️ NEPTUN WS event:",
                                     event_type,
                                 )
 
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            continue
+
+                        # =====================================
+                        # CLOSE
+                        # =====================================
+
+                        if msg.type == aiohttp.WSMsgType.CLOSE:
 
                             print(
-                                "❌ NEPTUN WebSocket error:",
+                                "⚠️ NEPTUN WS CLOSE отримано"
+                            )
+                            break
+
+                        # =====================================
+                        # CLOSING
+                        # =====================================
+
+                        if msg.type == aiohttp.WSMsgType.CLOSING:
+
+                            print(
+                                "⚠️ NEPTUN WS CLOSING отримано"
+                            )
+                            break
+
+                        # =====================================
+                        # CLOSED
+                        # =====================================
+
+                        if msg.type == aiohttp.WSMsgType.CLOSED:
+
+                            print(
+                                "⚠️ NEPTUN WS CLOSED"
+                            )
+                            break
+
+                        # =====================================
+                        # ERROR
+                        # =====================================
+
+                        if msg.type == aiohttp.WSMsgType.ERROR:
+
+                            print(
+                                "❌ NEPTUN WS ERROR:",
                                 ws.exception(),
                             )
-
                             break
 
-                        elif msg.type in (
-                            aiohttp.WSMsgType.CLOSED,
-                            aiohttp.WSMsgType.CLOSING,
-                        ):
+                    print(
+                        "🔚 NEPTUN WS завершив цикл"
+                    )
 
-                            print(
-                                "⚠️ NEPTUN WebSocket закритий:",
-                                ws.close_code,
-                            )
+                    print(
+                        "   close_code:",
+                        ws.close_code,
+                    )
 
-                            break
+                    print(
+                        "   exception:",
+                        ws.exception(),
+                    )
 
         except asyncio.CancelledError:
 
@@ -215,7 +308,8 @@ async def _websocket_loop():
         except Exception as e:
 
             print(
-                f"❌ NEPTUN WebSocket помилка: {e}"
+                "❌ NEPTUN WebSocket помилка:",
+                repr(e),
             )
 
         print(
@@ -232,6 +326,7 @@ def start_threats_websocket():
     """
 
     try:
+
         loop = asyncio.get_running_loop()
 
     except RuntimeError:
